@@ -18,7 +18,7 @@ class HiPlotGUI:
         self.html_filename = "hiplot_visualization.html"
         self.df_columns = []
         self.active_columns = {}  # Dictionary to track which columns are active
-        self.column_buttons = []  # To keep track of column toggle buttons
+        self.column_buttons = {}  # Dictionary to track column buttons by column name
         self.column_mapping = {}  # To track original column names to renamed ones
         self.df = None  # DataFrame to store the CSV data
         
@@ -158,6 +158,41 @@ class HiPlotGUI:
         # Update dropdowns with only active columns
         self.update_dropdown_lists()
     
+    def remove_constant_columns(self):
+        """Identify and disable columns that have the exact same value in all rows"""
+        if self.df is None or len(self.df) <= 1:  # Need at least 2 rows to compare
+            messagebox.showinfo("Info", "No data available to analyze")
+            return
+        
+        constant_columns = []
+        
+        # Check each column to see if all values are the same
+        for col in self.df_columns:
+            # Get unique values, ignoring NaN
+            unique_values = self.df[col].dropna().unique()
+            
+            # If there's only one unique value, it's a constant column
+            if len(unique_values) == 1 or (self.df[col].isna().all()):
+                constant_columns.append(col)
+                # Deactivate the column
+                if col in self.active_columns:
+                    self.active_columns[col] = False
+                    # Update button appearance
+                    if col in self.column_buttons:
+                        self.column_buttons[col].config(bg="light gray", activebackground="light gray")
+        
+        # Update dropdowns
+        self.update_dropdown_lists()
+        
+        # Show message with results
+        if constant_columns:
+            messagebox.showinfo("Constant Columns Removed", 
+                              f"Removed {len(constant_columns)} constant column(s):\n" + 
+                              "\n".join(constant_columns[:10]) + 
+                              ("\n..." if len(constant_columns) > 10 else ""))
+        else:
+            messagebox.showinfo("No Constant Columns", "No constant columns found in the data")
+    
     def show_column_context_menu(self, event, original_column, button):
         """Show the context menu for a column button"""
         # Create a new context menu for this specific button
@@ -173,6 +208,15 @@ class HiPlotGUI:
         context_menu.add_command(
             label="View/Edit Column Data", 
             command=lambda: self.show_column_data(original_column)
+        )
+        
+        # Add separator
+        context_menu.add_separator()
+        
+        # Add option to remove constant columns
+        context_menu.add_command(
+            label="Remove Constant Columns",
+            command=self.remove_constant_columns
         )
         
         # Show the menu at the click position
@@ -362,7 +406,7 @@ class HiPlotGUI:
         for widget in self.columns_grid_frame.winfo_children():
             widget.destroy()
         
-        self.column_buttons = []
+        self.column_buttons = {}
         
         if not self.df_columns:
             empty_label = tk.Label(self.columns_grid_frame, text="Load a CSV file to see columns")
@@ -392,8 +436,8 @@ class HiPlotGUI:
             )
             button.grid(row=row_idx, column=col_idx, padx=5, pady=5, sticky="nsew")
             
-            # Store reference to the button and fix the command to reference the correct button
-            self.column_buttons.append(button)
+            # Store reference to the button in the dictionary
+            self.column_buttons[column] = button
             button.config(command=lambda col=column, btn=button: self.toggle_column(col, btn))
             
             # Add right-click event for context menu
