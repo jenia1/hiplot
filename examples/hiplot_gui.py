@@ -7,6 +7,7 @@ import os
 import webbrowser
 import math
 import numpy as np
+import re
 
 class HiPlotGUI:
     def __init__(self, root):
@@ -74,6 +75,27 @@ class HiPlotGUI:
         self.columns_grid_frame = tk.Frame(self.columns_frame)
         self.columns_grid_frame.pack(fill=tk.BOTH, expand=True)
         
+        # Add Column Expression Button Frame
+        add_column_frame = tk.Frame(self.content_frame)
+        add_column_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Add Column Button
+        self.add_column_btn = tk.Button(
+            add_column_frame, 
+            text="Add Column with Expression", 
+            command=self.show_add_column_dialog,
+            width=25,
+            state=tk.DISABLED
+        )
+        self.add_column_btn.pack(side=tk.LEFT, padx=10)
+        
+        # Add tooltip-like info button or text
+        tk.Label(
+            add_column_frame, 
+            text="(e.g., 'col1 + col2', 'col1 * 2', 'np.log(col1)')", 
+            fg="gray"
+        ).pack(side=tk.LEFT, padx=5)
+        
         # Output settings frame
         output_frame = tk.LabelFrame(self.content_frame, text="Output Settings", padx=15, pady=15)
         output_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -132,6 +154,262 @@ class HiPlotGUI:
         
         # Create context menu (not assigned to anything yet - will be created per column)
         self.context_menu = tk.Menu(self.root, tearoff=0)
+    
+    def show_add_column_dialog(self):
+        """Show a dialog to add a new column using a mathematical expression"""
+        if self.df is None:
+            messagebox.showwarning("Warning", "Please load a CSV file first")
+            return
+        
+        # Create a new top-level window
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add Column with Expression")
+        dialog.geometry("800x500")
+        dialog.transient(self.root)  # Make the window transient (always on top of the main window)
+        dialog.grab_set()  # Make the window modal
+        
+        # Create and configure the main frame
+        main_frame = tk.Frame(dialog, padx=15, pady=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Column name entry
+        name_frame = tk.Frame(main_frame)
+        name_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        tk.Label(name_frame, text="New Column Name:", width=15, anchor="w").pack(side=tk.LEFT)
+        name_var = tk.StringVar()
+        name_entry = tk.Entry(name_frame, textvariable=name_var, width=30)
+        name_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # Create a frame for the main content area with columns list, expression, and reference
+        content_frame = tk.Frame(main_frame)
+        content_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Left panel: Available Columns
+        columns_frame = tk.LabelFrame(content_frame, text="Available Columns (click to copy)", padx=10, pady=10)
+        columns_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        # Create a listbox with scrollbar for columns
+        columns_listbox_frame = tk.Frame(columns_frame)
+        columns_listbox_frame.pack(fill=tk.BOTH, expand=True)
+        
+        columns_scrollbar = ttk.Scrollbar(columns_listbox_frame)
+        columns_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        columns_listbox = tk.Listbox(
+            columns_listbox_frame,
+            width=25,
+            selectmode=tk.SINGLE,
+            yscrollcommand=columns_scrollbar.set
+        )
+        columns_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        columns_scrollbar.config(command=columns_listbox.yview)
+        
+        # Populate the columns listbox
+        for col in self.df_columns:
+            columns_listbox.insert(tk.END, col)
+        
+        # Add function to copy column name to clipboard when clicked
+        def copy_column_to_expression():
+            selection = columns_listbox.curselection()
+            if selection:
+                selected_col = columns_listbox.get(selection[0])
+                current_pos = expr_text.index(tk.INSERT)
+                expr_text.insert(current_pos, selected_col)
+                expr_text.focus_set()  # Return focus to expression text area
+                
+        columns_listbox.bind("<Double-1>", lambda e: copy_column_to_expression())
+        
+        # Add a "Copy to Expression" button under the listbox
+        copy_btn = tk.Button(
+            columns_frame,
+            text="Copy Selected to Expression",
+            command=copy_column_to_expression
+        )
+        copy_btn.pack(pady=5)
+        
+        # Middle panel: Expression entry
+        expr_frame = tk.LabelFrame(content_frame, text="Enter Expression", padx=10, pady=10)
+        expr_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+        
+        # Create a scrollable text widget for the expression
+        expr_text = tk.Text(expr_frame, width=30, height=10, wrap=tk.WORD)
+        expr_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        expr_scrollbar = ttk.Scrollbar(expr_frame, orient="vertical", command=expr_text.yview)
+        expr_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        expr_text.configure(yscrollcommand=expr_scrollbar.set)
+        
+        # Add an empty line to start
+        expr_text.insert("1.0", "")
+        expr_text.focus_set()  # Set focus to the expression text area
+        
+        # Right panel: Operations and Examples
+        ref_frame = tk.LabelFrame(content_frame, text="Operations & Examples", padx=10, pady=10)
+        ref_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        
+        # Create a scrollable text widget for the reference
+        ref_text = tk.Text(ref_frame, width=30, height=10, wrap=tk.WORD)
+        ref_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        ref_scrollbar = ttk.Scrollbar(ref_frame, orient="vertical", command=ref_text.yview)
+        ref_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        ref_text.configure(yscrollcommand=ref_scrollbar.set)
+        
+        # Populate reference text with operations and examples
+        reference_content = """BASIC OPERATIONS:
+• Addition: col1 + col2
+• Subtraction: col1 - col2
+• Multiplication: col1 * col2
+• Division: col1 / col2
+• Power: col1 ** 2
+
+FUNCTIONS:
+• Round: np.round(col1, 2)
+• Absolute: np.abs(col1)
+• Log: np.log(col1)
+• Exp: np.exp(col1)
+• Square root: np.sqrt(col1)
+• Sin/Cos: np.sin(col1)
+
+CONDITIONALS:
+• IF-ELSE: np.where(col1 > 0, col1, 0)
+• Multiple: np.select(
+    [col1<0, col1>100], 
+    ['low', 'high'], 
+    default='normal')
+
+TEXT OPERATIONS:
+• Uppercase: col1.str.upper()
+• Replace: col1.str.replace('old', 'new')
+• Extract: col1.str.extract('(\\\\d+)')
+• Length: col1.str.len()
+
+AGGREGATIONS:
+• Combine text: col1 + '-' + col2
+• Column max: np.maximum(col1, col2)
+• Column min: np.minimum(col1, col2)
+
+COMPLEX EXAMPLES:
+• BMI: col_weight / (col_height**2)
+• Z-score: (col1 - col1.mean()) / col1.std()
+• Categorize: 
+  np.where(col1 < 10, 'Low',
+    np.where(col1 < 50, 'Medium', 'High'))
+"""
+        
+        ref_text.insert("1.0", reference_content)
+        ref_text.config(state=tk.DISABLED)  # Make it read-only
+        
+        # Buttons frame
+        button_frame = tk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=10)
+        
+        # Cancel button
+        cancel_btn = tk.Button(
+            button_frame, 
+            text="Cancel", 
+            command=dialog.destroy, 
+            width=10
+        )
+        cancel_btn.pack(side=tk.RIGHT, padx=5)
+        
+        # Add Column button
+        add_btn = tk.Button(
+            button_frame, 
+            text="Add Column", 
+            command=lambda: self.create_column_from_expression(
+                name_var.get(), 
+                expr_text.get("1.0", tk.END).strip(),
+                dialog
+            ), 
+            width=15
+        )
+        add_btn.pack(side=tk.RIGHT, padx=5)
+    
+    def create_column_from_expression(self, column_name, expression, dialog):
+        """Create a new column using the provided mathematical expression"""
+        if not column_name or not column_name.strip():
+            messagebox.showwarning("Warning", "Please enter a column name", parent=dialog)
+            return
+        
+        if not expression or not expression.strip():
+            messagebox.showwarning("Warning", "Please enter an expression", parent=dialog)
+            return
+        
+        column_name = column_name.strip()
+        expression = expression.strip()
+        
+        # Check if column name already exists
+        if column_name in self.df.columns:
+            overwrite = messagebox.askyesno(
+                "Column Exists", 
+                f"Column '{column_name}' already exists. Overwrite?",
+                default=messagebox.NO,
+                parent=dialog
+            )
+            if not overwrite:
+                return
+        
+        try:
+            # Create a local environment with column references
+            local_env = {'np': np, 'pd': pd}
+            
+            # Add each column as a variable in the environment
+            for col in self.df.columns:
+                # Replace spaces and special characters in column names for variable names
+                safe_col_name = re.sub(r'\W|^(?=\d)', '_', col)
+                local_env[safe_col_name] = self.df[col]
+                
+                # Also add the original column name if it's a valid Python identifier
+                if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+                    local_env[col] = self.df[col]
+            
+            # Replace column names with safe variable names in the expression
+            mod_expression = expression
+            for col in sorted(self.df.columns, key=len, reverse=True):  # Sort by length for proper replacement
+                if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+                    safe_name = re.sub(r'\W|^(?=\d)', '_', col)
+                    # Only replace full column names (not substrings)
+                    mod_expression = re.sub(r'\b' + re.escape(col) + r'\b', safe_name, mod_expression)
+            
+            # Execute the expression and assign the result to the new column
+            result = eval(mod_expression, {"__builtins__": {}}, local_env)
+            
+            # Check if the result has the correct length
+            if isinstance(result, (pd.Series, np.ndarray)) and len(result) == len(self.df):
+                self.df[column_name] = result
+            else:
+                # Try to broadcast scalar values
+                self.df[column_name] = result
+            
+            # Update the column list
+            if column_name not in self.df_columns:
+                self.df_columns.append(column_name)
+                self.update_column_grid_and_dropdowns()
+            else:
+                # If we're overwriting an existing column, no need to update the grid
+                # But let's update the dropdowns in case column was inactive
+                self.active_columns[column_name] = True
+                self.update_dropdown_lists()
+                
+                # If the column button exists, make sure it's active (green)
+                if column_name in self.column_buttons:
+                    self.column_buttons[column_name].config(bg="light green", activebackground="light green")
+            
+            # Close the dialog without showing a success message
+            dialog.destroy()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to create column: {str(e)}", parent=dialog)
+    
+    def update_column_grid_and_dropdowns(self):
+        """Update both the column grid and dropdown options after adding a new column"""
+        # Recreate the column grid
+        self.create_column_grid()
+        
+        # Update the dropdown options
+        self.update_dropdown_lists()
     
     def on_frame_configure(self, event=None):
         """Reset the scroll region to encompass the content frame"""
@@ -244,6 +522,72 @@ class HiPlotGUI:
             # Update the dropdowns
             self.update_dropdown_lists()
     
+    def refresh_data_view(self, column_name, scrollable_frame):
+        """Refresh the data view based on toggle state (all values or unique values)"""
+        # Clear existing widgets from the scrollable frame
+        for widget in scrollable_frame.winfo_children():
+            widget.destroy()
+        
+        # Get column data
+        column_data = self.df[column_name].copy()
+        
+        # Determine if we're showing all values or unique values
+        show_unique = self.show_unique_only.get()
+        
+        # Store the entries for later reference when saving
+        self.value_entries = {}
+        
+        if show_unique:
+            # Show only unique values
+            
+            # Add column headers
+            tk.Label(scrollable_frame, text="Value", font=('bold'), width=20).grid(row=0, column=0, padx=5, pady=5)
+            tk.Label(scrollable_frame, text="New Value", font=('bold'), width=20).grid(row=0, column=1, padx=5, pady=5)
+            tk.Label(scrollable_frame, text="Occurrences", font=('bold'), width=10).grid(row=0, column=2, padx=5, pady=5)
+            
+            # Get unique values
+            unique_values = column_data.dropna().unique()
+            
+            # Add data rows with editable fields for unique values
+            for i, value in enumerate(sorted(unique_values, key=str), 1):
+                # Count occurrences of this value
+                occurrences = len(self.df[self.df[column_name] == value])
+                
+                # Original value label (non-editable)
+                original_value_str = str(value)
+                tk.Label(scrollable_frame, text=original_value_str, width=20).grid(row=i, column=0, padx=5, pady=2)
+                
+                # New value entry
+                value_var = tk.StringVar(value=original_value_str)
+                entry = tk.Entry(scrollable_frame, textvariable=value_var, width=20)
+                entry.grid(row=i, column=1, padx=5, pady=2)
+                
+                # Occurrences count
+                tk.Label(scrollable_frame, text=str(occurrences), width=10).grid(row=i, column=2, padx=5, pady=2)
+                
+                # Store the entry variable with a special prefix to identify as unique value
+                self.value_entries[f"unique:{original_value_str}"] = value_var
+                
+        else:
+            # Show all values
+            
+            # Add column headers
+            tk.Label(scrollable_frame, text="Index", font=('bold'), width=10).grid(row=0, column=0, padx=5, pady=5)
+            tk.Label(scrollable_frame, text="Value", font=('bold'), width=30).grid(row=0, column=1, padx=5, pady=5)
+            
+            # Add data rows with editable fields for all values
+            for i, (idx, value) in enumerate(column_data.items(), 1):
+                # Index label
+                tk.Label(scrollable_frame, text=str(idx), width=10).grid(row=i, column=0, padx=5, pady=2)
+                
+                # Value entry
+                value_var = tk.StringVar(value=str(value))
+                entry = tk.Entry(scrollable_frame, textvariable=value_var, width=30)
+                entry.grid(row=i, column=1, padx=5, pady=2)
+                
+                # Store the entry variable with the row index
+                self.value_entries[idx] = value_var
+    
     def show_column_data(self, column_name):
         """Show the column data in a new window with the ability to edit values and toggle between all/unique values"""
         if self.df is None or column_name not in self.df.columns:
@@ -354,72 +698,6 @@ class HiPlotGUI:
         cancel_btn = tk.Button(button_frame, text="Cancel", command=data_window.destroy)
         cancel_btn.pack(side=tk.LEFT, padx=10)
     
-    def refresh_data_view(self, column_name, scrollable_frame):
-        """Refresh the data view based on toggle state (all values or unique values)"""
-        # Clear existing widgets from the scrollable frame
-        for widget in scrollable_frame.winfo_children():
-            widget.destroy()
-        
-        # Get column data
-        column_data = self.df[column_name].copy()
-        
-        # Determine if we're showing all values or unique values
-        show_unique = self.show_unique_only.get()
-        
-        # Store the entries for later reference when saving
-        self.value_entries = {}
-        
-        if show_unique:
-            # Show only unique values
-            
-            # Add column headers
-            tk.Label(scrollable_frame, text="Value", font=('bold'), width=20).grid(row=0, column=0, padx=5, pady=5)
-            tk.Label(scrollable_frame, text="New Value", font=('bold'), width=20).grid(row=0, column=1, padx=5, pady=5)
-            tk.Label(scrollable_frame, text="Occurrences", font=('bold'), width=10).grid(row=0, column=2, padx=5, pady=5)
-            
-            # Get unique values
-            unique_values = column_data.dropna().unique()
-            
-            # Add data rows with editable fields for unique values
-            for i, value in enumerate(sorted(unique_values, key=str), 1):
-                # Count occurrences of this value
-                occurrences = len(self.df[self.df[column_name] == value])
-                
-                # Original value label (non-editable)
-                original_value_str = str(value)
-                tk.Label(scrollable_frame, text=original_value_str, width=20).grid(row=i, column=0, padx=5, pady=2)
-                
-                # New value entry
-                value_var = tk.StringVar(value=original_value_str)
-                entry = tk.Entry(scrollable_frame, textvariable=value_var, width=20)
-                entry.grid(row=i, column=1, padx=5, pady=2)
-                
-                # Occurrences count
-                tk.Label(scrollable_frame, text=str(occurrences), width=10).grid(row=i, column=2, padx=5, pady=2)
-                
-                # Store the entry variable with a special prefix to identify as unique value
-                self.value_entries[f"unique:{original_value_str}"] = value_var
-                
-        else:
-            # Show all values
-            
-            # Add column headers
-            tk.Label(scrollable_frame, text="Index", font=('bold'), width=10).grid(row=0, column=0, padx=5, pady=5)
-            tk.Label(scrollable_frame, text="Value", font=('bold'), width=30).grid(row=0, column=1, padx=5, pady=5)
-            
-            # Add data rows with editable fields for all values
-            for i, (idx, value) in enumerate(column_data.items(), 1):
-                # Index label
-                tk.Label(scrollable_frame, text=str(idx), width=10).grid(row=i, column=0, padx=5, pady=2)
-                
-                # Value entry
-                value_var = tk.StringVar(value=str(value))
-                entry = tk.Entry(scrollable_frame, textvariable=value_var, width=30)
-                entry.grid(row=i, column=1, padx=5, pady=2)
-                
-                # Store the entry variable with the row index
-                self.value_entries[idx] = value_var
-    
     def save_column_or_unique_changes(self, column_name):
         """Save changes based on view mode (all values or unique values)"""
         if self.df is None:
@@ -433,7 +711,6 @@ class HiPlotGUI:
             if self.show_unique_only.get():
                 # Process unique value changes
                 value_mapping = {}
-                changes_made = 0
                 
                 for key, value_var in self.value_entries.items():
                     if key.startswith("unique:"):
@@ -442,8 +719,6 @@ class HiPlotGUI:
                         
                         # Only include in mapping if the value changed
                         if original_val_str != new_val_str:
-                            changes_made += 1
-                            
                             # For numeric types, convert strings back to numbers
                             if np.issubdtype(original_dtype, np.number):
                                 try:
@@ -478,7 +753,8 @@ class HiPlotGUI:
             else:
                 # Process individual value changes (original method)
                 for idx, value_var in self.value_entries.items():
-                    if isinstance(idx, int) or idx.isdigit():  # Regular row index
+                    if isinstance(idx, int) or (isinstance(idx, str) and idx.isdigit()):
+                        idx = int(idx)  # Convert string index to integer if needed
                         new_value = value_var.get()
                         
                         # Try to convert to the original data type
@@ -660,6 +936,9 @@ class HiPlotGUI:
                     new_width = min(900, 750 + (num_columns - 15) * 5)  # Less increase needed with smaller buttons
                     new_height = min(800, 650 + (num_columns // 8) * 25)  # Adjusted for more columns per row
                     self.root.geometry(f"{new_width}x{new_height}")
+                
+                # Enable the add column button now that we have data
+                self.add_column_btn.config(state=tk.NORMAL)
             
             except Exception as e:
                 messagebox.showerror("Error", f"Could not read CSV file: {str(e)}")
