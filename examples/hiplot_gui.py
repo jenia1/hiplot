@@ -12,7 +12,7 @@ import re
 class HiPlotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("HiPlot Visualization Tool")
+        self.root.title("Mr.Spaghetti 🤌")
         self.root.geometry("750x650")
         self.csv_file_path = None
         self.output_directory = os.getcwd()  # Default to current directory
