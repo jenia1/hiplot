@@ -416,25 +416,26 @@ class HiPlotGUI:
         # Reset column mapping when creating a new grid
         self.column_mapping = {}
         
-        # Calculate grid dimensions
-        cols_per_row = 5
+        # Calculate grid dimensions - Increased columns per row since buttons are smaller
+        cols_per_row = 8  # Increased from 5 to 8 to fit more buttons per row
         
         # Create buttons for each column
         for i, column in enumerate(self.df_columns):
             row_idx = i // cols_per_row
             col_idx = i % cols_per_row
             
-            # Create button for the column
+            # Create button for the column - with reduced width and padding
             button = tk.Button(
                 self.columns_grid_frame, 
                 text=column, 
                 bg="light green",
                 activebackground="light green",
-                width=15,
-                pady=5,
+                width=8,  # Reduced from 15 to 8 (about half)
+                pady=2,   # Reduced from 5 to 2
+                font=('TkDefaultFont', 8),  # Smaller font
                 command=lambda col=column, btn=None: self.toggle_column(col, btn)
             )
-            button.grid(row=row_idx, column=col_idx, padx=5, pady=5, sticky="nsew")
+            button.grid(row=row_idx, column=col_idx, padx=2, pady=2, sticky="nsew")  # Reduced padding
             
             # Store reference to the button in the dictionary
             self.column_buttons[column] = button
@@ -536,8 +537,8 @@ class HiPlotGUI:
                 # Adjust window size based on number of columns
                 num_columns = len(columns)
                 if num_columns > 15:  # If there are many columns, make window larger
-                    new_width = min(900, 750 + (num_columns - 15) * 10)  # Cap at 900px width
-                    new_height = min(800, 650 + (num_columns // 5) * 40)  # Increase height based on rows
+                    new_width = min(900, 750 + (num_columns - 15) * 5)  # Less increase needed with smaller buttons
+                    new_height = min(800, 650 + (num_columns // 8) * 25)  # Adjusted for more columns per row
                     self.root.geometry(f"{new_width}x{new_height}")
             
             except Exception as e:
