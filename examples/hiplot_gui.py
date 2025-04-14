@@ -245,7 +245,7 @@ class HiPlotGUI:
             self.update_dropdown_lists()
     
     def show_column_data(self, column_name):
-        """Show the column data in a new window with the ability to edit values"""
+        """Show the column data in a new window with the ability to edit values and toggle between all/unique values"""
         if self.df is None or column_name not in self.df.columns:
             messagebox.showwarning("Warning", "No data available for this column")
             return
@@ -253,7 +253,7 @@ class HiPlotGUI:
         # Create a new top-level window
         data_window = tk.Toplevel(self.root)
         data_window.title(f"Column Data: {column_name}")
-        data_window.geometry("600x500")
+        data_window.geometry("650x550")
         
         # Get the column data
         column_data = self.df[column_name].copy()
@@ -291,6 +291,30 @@ class HiPlotGUI:
         
         tk.Label(stats_frame, text=stats_text, justify='left').pack(anchor='w')
         
+        # Create toggle frame for the view mode
+        toggle_frame = tk.Frame(frame)
+        toggle_frame.pack(fill=tk.X, pady=5)
+        
+        # Create a variable for the toggle state
+        self.show_unique_only = tk.BooleanVar(value=False)
+        
+        # Create radio buttons for toggle
+        tk.Radiobutton(
+            toggle_frame, 
+            text="Show All Values", 
+            variable=self.show_unique_only, 
+            value=False,
+            command=lambda: self.refresh_data_view(column_name, scrollable_frame)
+        ).pack(side=tk.LEFT, padx=20)
+        
+        tk.Radiobutton(
+            toggle_frame, 
+            text="Show Unique Values Only", 
+            variable=self.show_unique_only, 
+            value=True,
+            command=lambda: self.refresh_data_view(column_name, scrollable_frame)
+        ).pack(side=tk.LEFT, padx=20)
+        
         # Create a data editing frame
         edit_frame = tk.LabelFrame(frame, text="View/Edit Data", padx=10, pady=10)
         edit_frame.pack(fill=tk.BOTH, expand=True, pady=10)
@@ -311,25 +335,8 @@ class HiPlotGUI:
         data_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
-        # Add column headers
-        tk.Label(scrollable_frame, text="Index", font=('bold'), width=10).grid(row=0, column=0, padx=5, pady=5)
-        tk.Label(scrollable_frame, text="Value", font=('bold'), width=30).grid(row=0, column=1, padx=5, pady=5)
-        
-        # Store the entry widgets for later reference
-        self.value_entries = {}
-        
-        # Add data rows with editable fields
-        for i, (idx, value) in enumerate(column_data.items(), 1):
-            # Index label
-            tk.Label(scrollable_frame, text=str(idx), width=10).grid(row=i, column=0, padx=5, pady=2)
-            
-            # Value entry
-            value_var = tk.StringVar(value=str(value))
-            entry = tk.Entry(scrollable_frame, textvariable=value_var, width=30)
-            entry.grid(row=i, column=1, padx=5, pady=2)
-            
-            # Store the entry widget and variable
-            self.value_entries[idx] = value_var
+        # Initialize the view with all values (will be populated by refresh_data_view)
+        self.refresh_data_view(column_name, scrollable_frame)
         
         # Add buttons at the bottom
         button_frame = tk.Frame(frame)
@@ -339,7 +346,7 @@ class HiPlotGUI:
         save_btn = tk.Button(
             button_frame, 
             text="Save Changes", 
-            command=lambda: self.save_column_changes(column_name, self.value_entries)
+            command=lambda: self.save_column_or_unique_changes(column_name)
         )
         save_btn.pack(side=tk.LEFT, padx=10)
         
@@ -347,8 +354,74 @@ class HiPlotGUI:
         cancel_btn = tk.Button(button_frame, text="Cancel", command=data_window.destroy)
         cancel_btn.pack(side=tk.LEFT, padx=10)
     
-    def save_column_changes(self, column_name, value_entries):
-        """Save the changes made to the column data"""
+    def refresh_data_view(self, column_name, scrollable_frame):
+        """Refresh the data view based on toggle state (all values or unique values)"""
+        # Clear existing widgets from the scrollable frame
+        for widget in scrollable_frame.winfo_children():
+            widget.destroy()
+        
+        # Get column data
+        column_data = self.df[column_name].copy()
+        
+        # Determine if we're showing all values or unique values
+        show_unique = self.show_unique_only.get()
+        
+        # Store the entries for later reference when saving
+        self.value_entries = {}
+        
+        if show_unique:
+            # Show only unique values
+            
+            # Add column headers
+            tk.Label(scrollable_frame, text="Value", font=('bold'), width=20).grid(row=0, column=0, padx=5, pady=5)
+            tk.Label(scrollable_frame, text="New Value", font=('bold'), width=20).grid(row=0, column=1, padx=5, pady=5)
+            tk.Label(scrollable_frame, text="Occurrences", font=('bold'), width=10).grid(row=0, column=2, padx=5, pady=5)
+            
+            # Get unique values
+            unique_values = column_data.dropna().unique()
+            
+            # Add data rows with editable fields for unique values
+            for i, value in enumerate(sorted(unique_values, key=str), 1):
+                # Count occurrences of this value
+                occurrences = len(self.df[self.df[column_name] == value])
+                
+                # Original value label (non-editable)
+                original_value_str = str(value)
+                tk.Label(scrollable_frame, text=original_value_str, width=20).grid(row=i, column=0, padx=5, pady=2)
+                
+                # New value entry
+                value_var = tk.StringVar(value=original_value_str)
+                entry = tk.Entry(scrollable_frame, textvariable=value_var, width=20)
+                entry.grid(row=i, column=1, padx=5, pady=2)
+                
+                # Occurrences count
+                tk.Label(scrollable_frame, text=str(occurrences), width=10).grid(row=i, column=2, padx=5, pady=2)
+                
+                # Store the entry variable with a special prefix to identify as unique value
+                self.value_entries[f"unique:{original_value_str}"] = value_var
+                
+        else:
+            # Show all values
+            
+            # Add column headers
+            tk.Label(scrollable_frame, text="Index", font=('bold'), width=10).grid(row=0, column=0, padx=5, pady=5)
+            tk.Label(scrollable_frame, text="Value", font=('bold'), width=30).grid(row=0, column=1, padx=5, pady=5)
+            
+            # Add data rows with editable fields for all values
+            for i, (idx, value) in enumerate(column_data.items(), 1):
+                # Index label
+                tk.Label(scrollable_frame, text=str(idx), width=10).grid(row=i, column=0, padx=5, pady=2)
+                
+                # Value entry
+                value_var = tk.StringVar(value=str(value))
+                entry = tk.Entry(scrollable_frame, textvariable=value_var, width=30)
+                entry.grid(row=i, column=1, padx=5, pady=2)
+                
+                # Store the entry variable with the row index
+                self.value_entries[idx] = value_var
+    
+    def save_column_or_unique_changes(self, column_name):
+        """Save changes based on view mode (all values or unique values)"""
         if self.df is None:
             return
         
@@ -356,26 +429,73 @@ class HiPlotGUI:
             # Get the original data type of the column
             original_dtype = self.df[column_name].dtype
             
-            # Update the DataFrame with new values
-            for idx, value_var in value_entries.items():
-                new_value = value_var.get()
+            # Check if we're in unique values mode
+            if self.show_unique_only.get():
+                # Process unique value changes
+                value_mapping = {}
+                changes_made = 0
                 
-                # Try to convert to the original data type
-                try:
-                    if np.issubdtype(original_dtype, np.number):
-                        # For numeric types
-                        if pd.isna(new_value) or new_value == '':
-                            self.df.at[idx, column_name] = np.nan
-                        else:
-                            self.df.at[idx, column_name] = original_dtype.type(float(new_value))
-                    else:
-                        # For string or other types
-                        self.df.at[idx, column_name] = new_value
-                except ValueError:
-                    # If conversion fails, keep as string
-                    self.df.at[idx, column_name] = new_value
+                for key, value_var in self.value_entries.items():
+                    if key.startswith("unique:"):
+                        original_val_str = key.split(":", 1)[1]
+                        new_val_str = value_var.get()
+                        
+                        # Only include in mapping if the value changed
+                        if original_val_str != new_val_str:
+                            changes_made += 1
+                            
+                            # For numeric types, convert strings back to numbers
+                            if np.issubdtype(original_dtype, np.number):
+                                try:
+                                    # Try parsing the original value
+                                    try:
+                                        original_val = float(original_val_str)
+                                        if original_val.is_integer():
+                                            original_val = int(original_val)
+                                    except:
+                                        original_val = original_val_str
+                                        
+                                    # Try parsing the new value
+                                    try:
+                                        new_val = float(new_val_str)
+                                        if new_val.is_integer():
+                                            new_val = int(new_val)
+                                    except:
+                                        new_val = new_val_str
+                                    
+                                    value_mapping[original_val] = new_val
+                                except ValueError:
+                                    # If conversion fails, use string values
+                                    value_mapping[original_val_str] = new_val_str
+                            else:
+                                # For non-numeric types, use string values
+                                value_mapping[original_val_str] = new_val_str
+                
+                # Apply the mapping to the DataFrame column
+                for old_val, new_val in value_mapping.items():
+                    self.df.loc[self.df[column_name] == old_val, column_name] = new_val
+                
+            else:
+                # Process individual value changes (original method)
+                for idx, value_var in self.value_entries.items():
+                    if isinstance(idx, int) or idx.isdigit():  # Regular row index
+                        new_value = value_var.get()
+                        
+                        # Try to convert to the original data type
+                        try:
+                            if np.issubdtype(original_dtype, np.number):
+                                # For numeric types
+                                if pd.isna(new_value) or new_value == '':
+                                    self.df.at[idx, column_name] = np.nan
+                                else:
+                                    self.df.at[idx, column_name] = original_dtype.type(float(new_value))
+                            else:
+                                # For string or other types
+                                self.df.at[idx, column_name] = new_value
+                        except ValueError:
+                            # If conversion fails, keep as string
+                            self.df.at[idx, column_name] = new_value
             
-            messagebox.showinfo("Success", f"Changes to column '{column_name}' have been saved.")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save changes: {str(e)}")
     
