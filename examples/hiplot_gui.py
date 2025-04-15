@@ -8,11 +8,36 @@ import webbrowser
 import math
 import numpy as np
 import re
+import sys
+
+def resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 class HiPlotGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Mr.Spaghetti 🤌")
+        
+        # Set the window icon for title bar and taskbar
+        try:
+            # For Windows and most systems
+            icon_path = resource_path('spaghetti.ico')
+            self.root.iconbitmap(icon_path)
+        except tk.TclError:
+            try:
+                # Alternative method that works on more platforms
+                icon_path = resource_path('spaghetti.png')
+                icon_img = tk.PhotoImage(file=icon_path)
+                self.root.tk.call('wm', 'iconphoto', self.root._w, icon_img)
+            except Exception as e:
+                print(f"Failed to set icon: {e}")
+        
         self.root.geometry("750x650")
         self.csv_file_path = None
         self.output_directory = os.getcwd()  # Default to current directory
@@ -22,6 +47,11 @@ class HiPlotGUI:
         self.column_buttons = {}  # Dictionary to track column buttons by column name
         self.column_mapping = {}  # To track original column names to renamed ones
         self.df = None  # DataFrame to store the CSV data
+        
+        # Pagination settings
+        self.rows_per_page = 100
+        self.current_page = 0
+        self.total_pages = 1
         
         # Create GUI elements
         self.setup_ui()
@@ -154,6 +184,34 @@ class HiPlotGUI:
         
         # Create context menu (not assigned to anything yet - will be created per column)
         self.context_menu = tk.Menu(self.root, tearoff=0)
+    
+    def create_tooltip(self, widget, text):
+        """Create a tooltip for a widget to show full text on hover"""
+        # Function to show tooltip
+        def enter(event):
+            x, y, _, _ = widget.bbox("insert")
+            x += widget.winfo_rootx() + 25
+            y += widget.winfo_rooty() + 25
+            
+            # Create a toplevel window
+            self.tooltip = tk.Toplevel(widget)
+            self.tooltip.wm_overrideredirect(True)
+            self.tooltip.wm_geometry(f"+{x}+{y}")
+            
+            # Create tooltip content
+            label = tk.Label(self.tooltip, text=text, justify='left',
+                            background="#ffffe0", relief="solid", borderwidth=1,
+                            font=("TkDefaultFont", "8", "normal"))
+            label.pack(ipadx=3, ipady=1)
+        
+        # Function to hide tooltip
+        def leave(event):
+            if hasattr(self, 'tooltip'):
+                self.tooltip.destroy()
+        
+        # Bind events to widget
+        widget.bind("<Enter>", enter)
+        widget.bind("<Leave>", leave)
     
     def show_add_column_dialog(self):
         """Show a dialog to add a new column using a mathematical expression"""
@@ -403,6 +461,36 @@ COMPLEX EXAMPLES:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to create column: {str(e)}", parent=dialog)
     
+    def change_page(self, column_name, scrollable_frame, delta):
+        """Change the current page in pagination"""
+        new_page = self.current_page + delta
+        if 0 <= new_page < self.total_pages:
+            self.current_page = new_page
+            self.page_var.set(f"{self.current_page + 1} / {self.total_pages}")
+            self.refresh_data_view(column_name, scrollable_frame)
+    
+    def go_to_page(self, column_name, scrollable_frame, page_entry):
+        """Jump to a specific page"""
+        try:
+            page = int(page_entry.get()) - 1  # Convert to 0-based index
+            if 0 <= page < self.total_pages:
+                self.current_page = page
+                self.page_var.set(f"{self.current_page + 1} / {self.total_pages}")
+                self.refresh_data_view(column_name, scrollable_frame)
+            else:
+                messagebox.showwarning("Invalid Page", 
+                                    f"Please enter a page number between 1 and {self.total_pages}")
+        except ValueError:
+            messagebox.showwarning("Invalid Input", "Please enter a valid page number")
+    
+    def on_view_mode_changed(self, column_name, scrollable_frame):
+        """Handle changes to the view mode (all values or unique values)"""
+        # Reset to first page when switching modes
+        self.current_page = 0
+        
+        # Refresh the view with the new mode
+        self.refresh_data_view(column_name, scrollable_frame)
+    
     def update_column_grid_and_dropdowns(self):
         """Update both the column grid and dropdown options after adding a new column"""
         # Recreate the column grid
@@ -523,7 +611,7 @@ COMPLEX EXAMPLES:
             self.update_dropdown_lists()
     
     def refresh_data_view(self, column_name, scrollable_frame):
-        """Refresh the data view based on toggle state (all values or unique values)"""
+        """Refresh the data view based on toggle state (all values or unique values) with pagination"""
         # Clear existing widgets from the scrollable frame
         for widget in scrollable_frame.winfo_children():
             widget.destroy()
@@ -538,18 +626,36 @@ COMPLEX EXAMPLES:
         self.value_entries = {}
         
         if show_unique:
-            # Show only unique values
+            # Get unique values
+            unique_values = column_data.dropna().unique()
+            
+            # Sort unique values for consistent display
+            try:
+                unique_values = sorted(unique_values)
+            except TypeError:
+                # If values can't be sorted (mixed types), convert to strings
+                unique_values = sorted(unique_values, key=str)
+            
+            # Paginate unique values
+            self.total_pages = math.ceil(len(unique_values) / self.rows_per_page)
+            
+            # Update page display
+            self.page_var.set(f"{self.current_page + 1} / {self.total_pages}")
+            
+            # Calculate start and end indices for the current page
+            start_idx = self.current_page * self.rows_per_page
+            end_idx = min(start_idx + self.rows_per_page, len(unique_values))
+            
+            # Get current page's unique values
+            page_unique_values = unique_values[start_idx:end_idx]
             
             # Add column headers
             tk.Label(scrollable_frame, text="Value", font=('bold'), width=20).grid(row=0, column=0, padx=5, pady=5)
             tk.Label(scrollable_frame, text="New Value", font=('bold'), width=20).grid(row=0, column=1, padx=5, pady=5)
             tk.Label(scrollable_frame, text="Occurrences", font=('bold'), width=10).grid(row=0, column=2, padx=5, pady=5)
             
-            # Get unique values
-            unique_values = column_data.dropna().unique()
-            
             # Add data rows with editable fields for unique values
-            for i, value in enumerate(sorted(unique_values, key=str), 1):
+            for i, value in enumerate(page_unique_values, 1):
                 # Count occurrences of this value
                 occurrences = len(self.df[self.df[column_name] == value])
                 
@@ -569,14 +675,31 @@ COMPLEX EXAMPLES:
                 self.value_entries[f"unique:{original_value_str}"] = value_var
                 
         else:
-            # Show all values
+            # Show all values with pagination
+            self.total_pages = math.ceil(len(column_data) / self.rows_per_page)
+            
+            # Update page display
+            self.page_var.set(f"{self.current_page + 1} / {self.total_pages}")
+            
+            # Calculate start and end indices for the current page
+            start_idx = self.current_page * self.rows_per_page
+            end_idx = min(start_idx + self.rows_per_page, len(column_data))
+            
+            # Get the page data - handle both regular index and RangeIndex
+            try:
+                page_data = column_data.iloc[start_idx:end_idx]
+                page_indices = column_data.index[start_idx:end_idx]
+            except:
+                # Fallback for any unexpected index issues
+                page_data = column_data.iloc[start_idx:end_idx]
+                page_indices = list(range(start_idx, end_idx))
             
             # Add column headers
             tk.Label(scrollable_frame, text="Index", font=('bold'), width=10).grid(row=0, column=0, padx=5, pady=5)
             tk.Label(scrollable_frame, text="Value", font=('bold'), width=30).grid(row=0, column=1, padx=5, pady=5)
             
-            # Add data rows with editable fields for all values
-            for i, (idx, value) in enumerate(column_data.items(), 1):
+            # Add data rows with editable fields for the current page
+            for i, (idx, value) in enumerate(zip(page_indices, page_data), 1):
                 # Index label
                 tk.Label(scrollable_frame, text=str(idx), width=10).grid(row=i, column=0, padx=5, pady=2)
                 
@@ -589,7 +712,7 @@ COMPLEX EXAMPLES:
                 self.value_entries[idx] = value_var
     
     def show_column_data(self, column_name):
-        """Show the column data in a new window with the ability to edit values and toggle between all/unique values"""
+        """Show the column data in a new window with pagination for large datasets"""
         if self.df is None or column_name not in self.df.columns:
             messagebox.showwarning("Warning", "No data available for this column")
             return
@@ -602,6 +725,13 @@ COMPLEX EXAMPLES:
         # Get the column data
         column_data = self.df[column_name].copy()
         
+        # Reset pagination for a new view
+        self.current_page = 0
+        
+        # Configure pagination for "all values" mode initially
+        self.rows_per_page = 100
+        self.total_pages = math.ceil(len(column_data) / self.rows_per_page)
+        
         # Create a frame for the data display
         frame = tk.Frame(data_window, padx=15, pady=15)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -609,6 +739,9 @@ COMPLEX EXAMPLES:
         # Add column statistics at the top
         stats_frame = tk.LabelFrame(frame, text="Column Statistics", padx=10, pady=10)
         stats_frame.pack(fill=tk.X, pady=10)
+        
+        # Calculate number of unique values for display
+        unique_count = len(column_data.dropna().unique())
         
         # Determine data type and show appropriate statistics
         data_type = column_data.dtype
@@ -623,14 +756,14 @@ COMPLEX EXAMPLES:
                 f"Median: {column_data.median()}\n"
                 f"Standard Deviation: {column_data.std():.4f}\n"
                 f"Count: {len(column_data)}\n"
-                f"Unique Values: {len(column_data.unique())}"
+                f"Unique Values: {unique_count}"
             )
         else:
             # Text or other data - show basic info
             stats_text = (
                 f"Type: {data_type}\n"
                 f"Count: {len(column_data)}\n"
-                f"Unique Values: {len(column_data.unique())}"
+                f"Unique Values: {unique_count}"
             )
         
         tk.Label(stats_frame, text=stats_text, justify='left').pack(anchor='w')
@@ -648,7 +781,7 @@ COMPLEX EXAMPLES:
             text="Show All Values", 
             variable=self.show_unique_only, 
             value=False,
-            command=lambda: self.refresh_data_view(column_name, scrollable_frame)
+            command=lambda: self.on_view_mode_changed(column_name, scrollable_frame)
         ).pack(side=tk.LEFT, padx=20)
         
         tk.Radiobutton(
@@ -656,8 +789,47 @@ COMPLEX EXAMPLES:
             text="Show Unique Values Only", 
             variable=self.show_unique_only, 
             value=True,
-            command=lambda: self.refresh_data_view(column_name, scrollable_frame)
+            command=lambda: self.on_view_mode_changed(column_name, scrollable_frame)
         ).pack(side=tk.LEFT, padx=20)
+        
+        # Create pagination controls
+        page_control_frame = tk.Frame(frame)
+        page_control_frame.pack(fill=tk.X, pady=5)
+        
+        # Page indicator
+        self.page_var = tk.StringVar(value=f"1 / {self.total_pages}")
+        
+        # Navigation buttons and page indicator
+        tk.Label(page_control_frame, text="Page:").pack(side=tk.LEFT, padx=5)
+        tk.Label(page_control_frame, textvariable=self.page_var, width=10).pack(side=tk.LEFT, padx=5)
+        
+        # Previous page button
+        prev_btn = tk.Button(
+            page_control_frame, 
+            text="Previous", 
+            command=lambda: self.change_page(column_name, scrollable_frame, -1)
+        )
+        prev_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Next page button
+        next_btn = tk.Button(
+            page_control_frame, 
+            text="Next", 
+            command=lambda: self.change_page(column_name, scrollable_frame, 1)
+        )
+        next_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Jump to page entry and button
+        tk.Label(page_control_frame, text="Go to:").pack(side=tk.LEFT, padx=(20, 5))
+        page_entry = tk.Entry(page_control_frame, width=8)
+        page_entry.pack(side=tk.LEFT, padx=5)
+        
+        go_btn = tk.Button(
+            page_control_frame, 
+            text="Go", 
+            command=lambda: self.go_to_page(column_name, scrollable_frame, page_entry)
+        )
+        go_btn.pack(side=tk.LEFT, padx=5)
         
         # Create a data editing frame
         edit_frame = tk.LabelFrame(frame, text="View/Edit Data", padx=10, pady=10)
@@ -711,6 +883,7 @@ COMPLEX EXAMPLES:
             if self.show_unique_only.get():
                 # Process unique value changes
                 value_mapping = {}
+                changes_made = 0
                 
                 for key, value_var in self.value_entries.items():
                     if key.startswith("unique:"):
@@ -719,6 +892,7 @@ COMPLEX EXAMPLES:
                         
                         # Only include in mapping if the value changed
                         if original_val_str != new_val_str:
+                            changes_made += 1
                             # For numeric types, convert strings back to numbers
                             if np.issubdtype(original_dtype, np.number):
                                 try:
@@ -750,54 +924,55 @@ COMPLEX EXAMPLES:
                 for old_val, new_val in value_mapping.items():
                     self.df.loc[self.df[column_name] == old_val, column_name] = new_val
                 
+                if changes_made > 0:
+                    messagebox.showinfo("Success", f"Changes to {changes_made} unique value(s) have been applied throughout the dataset")
+                else:
+                    messagebox.showinfo("No Changes", "No changes were made to any values")
+                
             else:
-                # Process individual value changes (original method)
+                # Process individual value changes (only for displayed rows)
+                changes_made = 0
+                
                 for idx, value_var in self.value_entries.items():
-                    if isinstance(idx, int) or (isinstance(idx, str) and idx.isdigit()):
-                        idx = int(idx)  # Convert string index to integer if needed
-                        new_value = value_var.get()
-                        
-                        # Try to convert to the original data type
-                        try:
-                            if np.issubdtype(original_dtype, np.number):
-                                # For numeric types
-                                if pd.isna(new_value) or new_value == '':
-                                    self.df.at[idx, column_name] = np.nan
-                                else:
-                                    self.df.at[idx, column_name] = original_dtype.type(float(new_value))
-                            else:
-                                # For string or other types
-                                self.df.at[idx, column_name] = new_value
-                        except ValueError:
-                            # If conversion fails, keep as string
-                            self.df.at[idx, column_name] = new_value
+                    # Only update if the index exists in the DataFrame
+                    if isinstance(idx, (int, np.integer)) or (isinstance(idx, str) and idx.isdigit()):
+                        if isinstance(idx, str) and idx.isdigit():
+                            idx = int(idx)
+                            
+                        # Handle RangeIndex vs regular index
+                        if idx in self.df.index:
+                            new_value = value_var.get()
+                            old_value = str(self.df.at[idx, column_name])
+                            
+                            # Only count as a change if value actually changed
+                            if new_value != old_value:
+                                changes_made += 1
+                                
+                                # Try to convert to the original data type
+                                try:
+                                    if np.issubdtype(original_dtype, np.number):
+                                        # For numeric types
+                                        if pd.isna(new_value) or new_value == '':
+                                            self.df.at[idx, column_name] = np.nan
+                                        else:
+                                            self.df.at[idx, column_name] = original_dtype.type(float(new_value))
+                                    else:
+                                        # For string or other types
+                                        self.df.at[idx, column_name] = new_value
+                                except ValueError:
+                                    # If conversion fails, keep as string
+                                    self.df.at[idx, column_name] = new_value
+                
+                if changes_made > 0:
+                    messagebox.showinfo("Success", f"Changes to {changes_made} value(s) have been saved")
+                else:
+                    messagebox.showinfo("No Changes", "No changes were made to any values")
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save changes: {str(e)}")
     
-    def update_dropdown_lists(self):
-        """Update dropdown lists with only active columns"""
-        # Get active columns with their display names (renamed if applicable)
-        active_cols = []
-        for col in self.df_columns:
-            if self.active_columns.get(col, True):
-                display_name = self.column_mapping.get(col, col)
-                active_cols.append(display_name)
-        
-        for dropdown in [self.color_by_dropdown, self.x_axis_dropdown, self.y_axis_dropdown]:
-            current_value = dropdown.get()
-            dropdown['values'] = active_cols
-            
-            # Try to preserve the current selection if possible
-            if current_value in active_cols:
-                dropdown.set(current_value)
-            elif active_cols:
-                dropdown.set(active_cols[0])
-            else:
-                dropdown.set('')
-    
     def create_column_grid(self):
-        """Create grid of column toggle buttons"""
+        """Create grid of column toggle buttons with dynamic width based on column names"""
         # Clear any existing buttons
         for widget in self.columns_grid_frame.winfo_children():
             widget.destroy()
@@ -812,26 +987,46 @@ COMPLEX EXAMPLES:
         # Reset column mapping when creating a new grid
         self.column_mapping = {}
         
-        # Calculate grid dimensions - Increased columns per row since buttons are smaller
-        cols_per_row = 8  # Increased from 5 to 8 to fit more buttons per row
+        # Calculate the maximum column name length for button sizing
+        max_name_length = max([len(str(col)) for col in self.df_columns])
+        
+        # Calculate button width based on max column name length
+        # Each character is approximately 0.8 characters in button width units
+        # Add padding to ensure text fits
+        base_width = max(8, min(20, int(max_name_length * 0.8) + 1))
+        
+        # Calculate grid dimensions - adjusting columns per row based on button width
+        button_width_factor = base_width / 8  # Relative to the original 8 width
+        cols_per_row = max(3, int(8 / button_width_factor))  # Ensure at least 3 columns
         
         # Create buttons for each column
         for i, column in enumerate(self.df_columns):
             row_idx = i // cols_per_row
             col_idx = i % cols_per_row
             
-            # Create button for the column - with reduced width and padding
+            # Determine font size based on column name length
+            col_name = str(column)
+            if len(col_name) > 15:
+                font_size = 7  # Smaller font for long names
+            else:
+                font_size = 8  # Default font size
+            
+            # Create button for the column with adaptive width
             button = tk.Button(
                 self.columns_grid_frame, 
-                text=column, 
+                text=col_name, 
                 bg="light green",
                 activebackground="light green",
-                width=8,  # Reduced from 15 to 8 (about half)
-                pady=2,   # Reduced from 5 to 2
-                font=('TkDefaultFont', 8),  # Smaller font
+                width=base_width,  # Dynamic width based on max column length
+                pady=2,
+                font=('TkDefaultFont', font_size),  # Dynamic font size
                 command=lambda col=column, btn=None: self.toggle_column(col, btn)
             )
-            button.grid(row=row_idx, column=col_idx, padx=2, pady=2, sticky="nsew")  # Reduced padding
+            button.grid(row=row_idx, column=col_idx, padx=2, pady=2, sticky="nsew")
+            
+            # Add tooltip for long column names
+            if len(col_name) > base_width:
+                self.create_tooltip(button, col_name)
             
             # Store reference to the button in the dictionary
             self.column_buttons[column] = button
@@ -854,6 +1049,27 @@ COMPLEX EXAMPLES:
         # Update scroll region after creating the grid
         self.root.update_idletasks()
         self.on_frame_configure()
+    
+    def update_dropdown_lists(self):
+        """Update dropdown lists with only active columns"""
+        # Get active columns with their display names (renamed if applicable)
+        active_cols = []
+        for col in self.df_columns:
+            if self.active_columns.get(col, True):
+                display_name = self.column_mapping.get(col, col)
+                active_cols.append(display_name)
+        
+        for dropdown in [self.color_by_dropdown, self.x_axis_dropdown, self.y_axis_dropdown]:
+            current_value = dropdown.get()
+            dropdown['values'] = active_cols
+            
+            # Try to preserve the current selection if possible
+            if current_value in active_cols:
+                dropdown.set(current_value)
+            elif active_cols:
+                dropdown.set(active_cols[0])
+            else:
+                dropdown.set('')
     
     def browse_output_dir(self):
         """Open directory browser to select output location"""
@@ -926,8 +1142,16 @@ COMPLEX EXAMPLES:
             
             # Try to read the CSV to get column names
             try:
+                # Show a loading message for large files
+                self.file_label.config(text=f"Loading {os.path.basename(file_path)}... This may take a moment.")
+                self.root.update()  # Force UI update to show loading message
+                
                 self.df = pd.read_csv(file_path)
                 columns = self.df.columns.tolist()
+                
+                # Update file label with row count information
+                self.file_label.config(text=f"Selected: {os.path.basename(file_path)} ({len(self.df)} rows, {len(columns)} columns)")
+                
                 self.update_dropdown_options(columns)
                 
                 # Adjust window size based on number of columns
@@ -941,6 +1165,7 @@ COMPLEX EXAMPLES:
                 self.add_column_btn.config(state=tk.NORMAL)
             
             except Exception as e:
+                self.file_label.config(text=f"Error: {os.path.basename(file_path)}")
                 messagebox.showerror("Error", f"Could not read CSV file: {str(e)}")
     
     def get_full_output_path(self):
@@ -986,7 +1211,21 @@ COMPLEX EXAMPLES:
         # Get full output path
         output_path = self.get_full_output_path()
         
+        # Make sure the output directory exists
+        output_dir = os.path.dirname(output_path)
+        if not os.path.exists(output_dir):
+            try:
+                os.makedirs(output_dir)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to create output directory: {str(e)}")
+                return
+        
         try:
+            # Show a loading message for large datasets
+            self.root.config(cursor="wait")  # Change cursor to hourglass
+            self.generate_btn.config(state=tk.DISABLED)
+            self.root.update()  # Force update to show cursor change
+            
             # Get active columns DataFrame with renamed columns
             active_df = self.get_active_columns_df()
             
@@ -1027,13 +1266,22 @@ COMPLEX EXAMPLES:
             # Clean up temp file
             try:
                 os.remove(temp_csv_path)
-            except:
-                pass
-                
+            except Exception as e:
+                print(f"Warning: Could not remove temp file: {e}")
+            
+            self.root.config(cursor="")  # Reset cursor
+            self.generate_btn.config(state=tk.NORMAL)
+            
             messagebox.showinfo("Success", f"HiPlot visualization saved to:\n{output_path}")
             self.view_btn.config(state=tk.NORMAL)
             
         except Exception as e:
+            self.root.config(cursor="")  # Reset cursor
+            self.generate_btn.config(state=tk.NORMAL)
+            
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Error generating HTML: {str(e)}\n{error_details}")
             messagebox.showerror("Error", f"Failed to generate HTML: {str(e)}")
     
     def view_html(self):
