@@ -559,6 +559,17 @@ COMPLEX EXAMPLES:
         else:
             messagebox.showinfo("No Constant Columns", "No constant columns found in the data")
     
+    def deselect_all_columns(self):
+     """Deselect all columns at once"""
+     for column in self.df_columns:
+         self.active_columns[column] = False
+         if column in self.column_buttons:
+             self.column_buttons[column].config(bg="light gray", activebackground="light gray")
+     
+     # Update dropdowns with only active columns (none in this case)
+     self.update_dropdown_lists()
+     
+    
     def show_column_context_menu(self, event, original_column, button):
         """Show the context menu for a column button"""
         # Create a new context menu for this specific button
@@ -583,6 +594,12 @@ COMPLEX EXAMPLES:
         context_menu.add_command(
             label="Remove Constant Columns",
             command=self.remove_constant_columns
+        )
+        
+            # Add option to deselect all columns
+        context_menu.add_command(
+            label="Deselect All Columns",
+            command=self.deselect_all_columns
         )
         
         # Show the menu at the click position
