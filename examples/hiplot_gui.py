@@ -972,83 +972,99 @@ COMPLEX EXAMPLES:
             messagebox.showerror("Error", f"Failed to save changes: {str(e)}")
     
     def create_column_grid(self):
-        """Create grid of column toggle buttons with dynamic width based on column names"""
-        # Clear any existing buttons
-        for widget in self.columns_grid_frame.winfo_children():
-            widget.destroy()
-        
-        self.column_buttons = {}
-        
-        if not self.df_columns:
-            empty_label = tk.Label(self.columns_grid_frame, text="Load a CSV file to see columns")
-            empty_label.pack(padx=10, pady=10)
-            return
-        
-        # Reset column mapping when creating a new grid
-        self.column_mapping = {}
-        
-        # Calculate the maximum column name length for button sizing
-        max_name_length = max([len(str(col)) for col in self.df_columns])
-        
-        # Calculate button width based on max column name length
-        # Each character is approximately 0.8 characters in button width units
-        # Add padding to ensure text fits
-        base_width = max(8, min(20, int(max_name_length * 0.8) + 1))
-        
-        # Calculate grid dimensions - adjusting columns per row based on button width
-        button_width_factor = base_width / 8  # Relative to the original 8 width
-        cols_per_row = max(3, int(8 / button_width_factor))  # Ensure at least 3 columns
-        
-        # Create buttons for each column
-        for i, column in enumerate(self.df_columns):
-            row_idx = i // cols_per_row
-            col_idx = i % cols_per_row
-            
-            # Determine font size based on column name length
-            col_name = str(column)
-            if len(col_name) > 15:
-                font_size = 7  # Smaller font for long names
-            else:
-                font_size = 8  # Default font size
-            
-            # Create button for the column with adaptive width
-            button = tk.Button(
-                self.columns_grid_frame, 
-                text=col_name, 
-                bg="light green",
-                activebackground="light green",
-                width=base_width,  # Dynamic width based on max column length
-                pady=2,
-                font=('TkDefaultFont', font_size),  # Dynamic font size
-                command=lambda col=column, btn=None: self.toggle_column(col, btn)
-            )
-            button.grid(row=row_idx, column=col_idx, padx=2, pady=2, sticky="nsew")
-            
-            # Add tooltip for long column names
-            if len(col_name) > base_width:
-                self.create_tooltip(button, col_name)
-            
-            # Store reference to the button in the dictionary
-            self.column_buttons[column] = button
-            button.config(command=lambda col=column, btn=button: self.toggle_column(col, btn))
-            
-            # Add right-click event for context menu
-            button.bind("<Button-3>", 
-                        lambda event, col=column, btn=button: 
-                        self.show_column_context_menu(event, col, btn))
-            
-            # Initialize as active
-            self.active_columns[column] = True
-            
-        # Configure grid weights
-        for i in range(math.ceil(len(self.df_columns) / cols_per_row)):
-            self.columns_grid_frame.grid_rowconfigure(i, weight=1)
-        for i in range(cols_per_row):
-            self.columns_grid_frame.grid_columnconfigure(i, weight=1)
-            
-        # Update scroll region after creating the grid
-        self.root.update_idletasks()
-        self.on_frame_configure()
+       """Create grid of column toggle buttons with optimized width and layout"""
+       # Clear any existing buttons
+       for widget in self.columns_grid_frame.winfo_children():
+           widget.destroy()
+       
+       self.column_buttons = {}
+       
+       if not self.df_columns:
+           empty_label = tk.Label(self.columns_grid_frame, text="Load a CSV file to see columns")
+           empty_label.pack(padx=10, pady=10)
+           return
+       
+       # Reset column mapping when creating a new grid
+       self.column_mapping = {}
+       
+       # Calculate the maximum column name length for button sizing
+       max_name_length = max([len(str(col)) for col in self.df_columns])
+       
+       # Calculate button width based on max column name length
+       # More efficient character-to-width ratio (reduced from 0.8 to 0.6)
+       # with smaller padding to reduce dead space
+       base_width = max(6, min(25, int(max_name_length * 0.6) + 1))
+       
+       # Fixed number of columns (5) as requested, regardless of button width
+       cols_per_row = 5
+       
+       # Check if window needs to be enlarged
+       if base_width > 12:  # If buttons are very wide
+           current_width = self.root.winfo_width()
+           needed_width = (base_width * 5 * 8) + 50  # Approximate width needed (character width * columns * pixel multiplier + padding)
+           if needed_width > current_width:
+               new_width = min(1200, needed_width)  # Cap at reasonable max width
+               current_height = self.root.winfo_height()
+               self.root.geometry(f"{new_width}x{current_height}")
+       
+       # Create buttons for each column
+       for i, column in enumerate(self.df_columns):
+           row_idx = i // cols_per_row
+           col_idx = i % cols_per_row
+           
+           # Get column name
+           col_name = str(column)
+           
+           # Determine font size based on column name length
+           if len(col_name) > 20:
+               font_size = 6  # Very small font for very long names
+           elif len(col_name) > 15:
+               font_size = 7  # Smaller font for long names
+           else:
+               font_size = 8  # Default font size
+           
+           # Create button with minimal internal padding to reduce dead space
+           button = tk.Button(
+               self.columns_grid_frame, 
+               text=col_name, 
+               bg="light green",
+               activebackground="light green",
+               width=base_width,
+               padx=1,  # Minimal horizontal internal padding
+               pady=1,  # Minimal vertical internal padding
+               font=('TkDefaultFont', font_size),
+               command=lambda col=column, btn=None: self.toggle_column(col, btn)
+           )
+           
+           # Use sticky="nsew" to make buttons fill their grid cells more efficiently
+           button.grid(row=row_idx, column=col_idx, padx=1, pady=1, sticky="nsew")
+           
+           # Add tooltip for all column names to ensure full visibility
+           self.create_tooltip(button, col_name)
+           
+           # Store reference to the button in the dictionary
+           self.column_buttons[column] = button
+           button.config(command=lambda col=column, btn=button: self.toggle_column(col, btn))
+           
+           # Add right-click event for context menu
+           button.bind("<Button-3>", 
+                       lambda event, col=column, btn=button: 
+                       self.show_column_context_menu(event, col, btn))
+           
+           # Initialize as active
+           self.active_columns[column] = True
+       
+       # Configure grid weights to make columns expand proportionally
+       for i in range(math.ceil(len(self.df_columns) / cols_per_row)):
+           self.columns_grid_frame.grid_rowconfigure(i, weight=1)
+       
+       # Make columns expand to fill available space
+       for i in range(cols_per_row):
+           self.columns_grid_frame.grid_columnconfigure(i, weight=1)
+       
+       # Update scroll region after creating the grid
+       self.root.update_idletasks()
+       self.on_frame_configure()
     
     def update_dropdown_lists(self):
         """Update dropdown lists with only active columns"""
