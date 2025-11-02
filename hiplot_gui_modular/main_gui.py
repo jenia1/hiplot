@@ -208,6 +208,11 @@ class HiPlotGUI:
         )
         
         if file_path:
+            # Save previous column selection state before loading new file
+            previous_selection = None
+            if self.column_manager:
+                previous_selection = self.column_manager.get_column_selection_state()
+            
             self.csv_file_path = file_path
             self.file_label.config(text=f"Selected: {os.path.basename(file_path)}")
             
@@ -227,8 +232,8 @@ class HiPlotGUI:
                 # Update file label with info
                 self.file_label.config(text=f"Selected: {os.path.basename(file_path)} ({len(self.df)} rows, {len(columns)} columns)")
                 
-                # Initialize column manager and update UI
-                self._initialize_data(columns)
+                # Initialize column manager and update UI (pass previous selection)
+                self._initialize_data(columns, previous_selection)
                 
                 # Adjust window size
                 configure_window_size(self.root, len(columns))
@@ -240,7 +245,7 @@ class HiPlotGUI:
                 self.file_label.config(text=f"Error: {os.path.basename(file_path)}")
                 messagebox.showerror("Error", f"Could not read CSV file: {str(e)}")
     
-    def _initialize_data(self, columns):
+    def _initialize_data(self, columns, previous_selection=None):
         """Initialize data and create column manager"""
         self.df_columns = columns
         
@@ -248,8 +253,8 @@ class HiPlotGUI:
         self.column_manager = ColumnManager(self.root, self.df, self.df_columns)
         self.column_manager.set_columns_updated_callback(self.update_dropdown_lists)
         
-        # Create column grid
-        self.column_manager.create_column_grid(self.columns_grid_frame)
+        # Create column grid (with previous selection if available)
+        self.column_manager.create_column_grid(self.columns_grid_frame, previous_selection)
         
         # Update dropdowns
         self.update_dropdown_lists()

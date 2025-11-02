@@ -27,7 +27,7 @@ class ColumnManager:
         """Set callback for when columns are updated"""
         self.on_columns_updated_callback = callback
     
-    def create_column_grid(self, grid_frame):
+    def create_column_grid(self, grid_frame, previous_selection=None):
         """Create grid of column toggle buttons"""
         self.columns_grid_frame = grid_frame
         
@@ -56,6 +56,10 @@ class ColumnManager:
         # Create buttons
         for i, column in enumerate(self.df_columns):
             self._create_column_button(column, i, cols_per_row, base_width)
+        
+        # Apply previous selection state if available
+        if previous_selection:
+            self._apply_previous_selection(previous_selection)
         
         # Configure grid weights
         self._configure_grid_weights(cols_per_row)
@@ -292,4 +296,34 @@ class ColumnManager:
         
         if self.on_columns_updated_callback:
             self.on_columns_updated_callback()
+    
+    def get_column_selection_state(self):
+        """Get the current selection state of all columns"""
+        return self.active_columns.copy()
+    
+    def _apply_previous_selection(self, previous_selection):
+        """Apply previous selection state to matching columns"""
+        if not previous_selection:
+            return
+        
+        matched_columns = 0
+        for column in self.df_columns:
+            if column in previous_selection:
+                # Column name matches - preserve its selection state
+                is_active = previous_selection[column]
+                self.active_columns[column] = is_active
+                
+                # Update button appearance
+                if column in self.column_buttons:
+                    button = self.column_buttons[column]
+                    if is_active:
+                        button.config(bg="light green", activebackground="light green")
+                    else:
+                        button.config(bg="light gray", activebackground="light gray")
+                
+                matched_columns += 1
+        
+        # Notify about preserved selections if any columns matched
+        if matched_columns > 0:
+            print(f"Preserved selection state for {matched_columns} matching column(s)")
 
