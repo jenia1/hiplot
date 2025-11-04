@@ -5,6 +5,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 import os
+import sys
+import subprocess
 import webbrowser
 import pandas as pd
 import hiplot as hip
@@ -161,23 +163,43 @@ class HiPlotGUI:
         config_frame = tk.LabelFrame(self.content_frame, text="Visualization Options", padx=15, pady=15)
         config_frame.pack(fill=tk.X, padx=10, pady=10)
         
+        # Visualization library selection
+        tk.Label(config_frame, text="Visualization Library:").grid(row=0, column=0, sticky="w", pady=5)
+        lib_frame = tk.Frame(config_frame)
+        lib_frame.grid(row=0, column=1, sticky="w", pady=5)
+        
+        self.viz_library_var = tk.StringVar(value="hiplot")
+        tk.Radiobutton(
+            lib_frame, 
+            text="HiPlot (Interactive & Feature-rich)", 
+            variable=self.viz_library_var, 
+            value="hiplot"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Radiobutton(
+            lib_frame, 
+            text="Plotly (Fast & Lightweight)", 
+            variable=self.viz_library_var, 
+            value="plotly"
+        ).pack(side=tk.LEFT, padx=5)
+        
         # Color by dropdown
-        tk.Label(config_frame, text="Color by:").grid(row=0, column=0, sticky="w", pady=5)
+        tk.Label(config_frame, text="Color by:").grid(row=1, column=0, sticky="w", pady=5)
         self.color_by_var = tk.StringVar()
         self.color_by_dropdown = ttk.Combobox(config_frame, textvariable=self.color_by_var, width=30, state="readonly")
-        self.color_by_dropdown.grid(row=0, column=1, sticky="w", pady=5)
+        self.color_by_dropdown.grid(row=1, column=1, sticky="w", pady=5)
         
         # X-axis dropdown
-        tk.Label(config_frame, text="X-axis:").grid(row=1, column=0, sticky="w", pady=5)
+        tk.Label(config_frame, text="X-axis:").grid(row=2, column=0, sticky="w", pady=5)
         self.x_axis_var = tk.StringVar()
         self.x_axis_dropdown = ttk.Combobox(config_frame, textvariable=self.x_axis_var, width=30, state="readonly")
-        self.x_axis_dropdown.grid(row=1, column=1, sticky="w", pady=5)
+        self.x_axis_dropdown.grid(row=2, column=1, sticky="w", pady=5)
         
         # Y-axis dropdown
-        tk.Label(config_frame, text="Y-axis:").grid(row=2, column=0, sticky="w", pady=5)
+        tk.Label(config_frame, text="Y-axis:").grid(row=3, column=0, sticky="w", pady=5)
         self.y_axis_var = tk.StringVar()
         self.y_axis_dropdown = ttk.Combobox(config_frame, textvariable=self.y_axis_var, width=30, state="readonly")
-        self.y_axis_dropdown.grid(row=2, column=1, sticky="w", pady=5)
+        self.y_axis_dropdown.grid(row=3, column=1, sticky="w", pady=5)
     
     def _create_buttons_section(self):
         """Create the action buttons section"""
@@ -342,11 +364,21 @@ class HiPlotGUI:
         return os.path.join(self.output_directory, filename)
     
     def generate_html(self):
-        """Generate HiPlot HTML visualization"""
+        """Generate visualization HTML based on selected library"""
         if not self.csv_file_path:
             messagebox.showwarning("Warning", "Please select a CSV file first")
             return
         
+        # Check which library to use
+        selected_library = self.viz_library_var.get()
+        
+        if selected_library == "plotly":
+            self._generate_plotly_html()
+        else:
+            self._generate_hiplot_html()
+    
+    def _generate_hiplot_html(self):
+        """Generate HiPlot HTML visualization"""
         output_path = self.get_full_output_path()
         
         # Ensure output directory exists
@@ -402,6 +434,139 @@ class HiPlotGUI:
             error_details = traceback.format_exc()
             print(f"Error generating HTML: {str(e)}\n{error_details}")
             messagebox.showerror("Error", f"Failed to generate HTML: {str(e)}")
+    
+    def _generate_plotly_html(self):
+        """Generate Plotly Parallel Coordinates HTML visualization"""
+        output_path = self.get_full_output_path()
+        
+        # Ensure output directory exists
+        output_dir = os.path.dirname(output_path)
+        if not os.path.exists(output_dir):
+            try:
+                os.makedirs(output_dir)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to create output directory: {str(e)}")
+                return
+        
+        try:
+            # Check if plotly is installed
+            try:
+                import plotly.graph_objects as go
+                import plotly.express as px
+            except ImportError:
+                response = messagebox.askyesno(
+                    "Plotly Not Installed",
+                    "Plotly is not installed. Would you like to install it now?\n\n"
+                    "This will run: pip install plotly",
+                    icon='question'
+                )
+                if response:
+                    import subprocess
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", "plotly"])
+                    import plotly.graph_objects as go
+                    import plotly.express as px
+                    messagebox.showinfo("Success", "Plotly has been installed successfully!")
+                else:
+                    return
+            
+            # Show loading state
+            self.root.config(cursor="wait")
+            self.generate_btn.config(state=tk.DISABLED)
+            self.root.update()
+            
+            # Get active columns data
+            active_df = self.column_manager.get_active_columns_df()
+            
+            if active_df is None or active_df.empty:
+                messagebox.showwarning("Warning", "No active columns selected for visualization")
+                return
+            
+            # Get configuration
+            color_by = self.color_by_var.get()
+            
+            # Prepare data for Plotly
+            # Separate numeric and categorical columns
+            numeric_cols = active_df.select_dtypes(include=['number']).columns.tolist()
+            categorical_cols = active_df.select_dtypes(exclude=['number']).columns.tolist()
+            
+            # Create dimensions for parallel coordinates
+            dimensions = []
+            
+            # Add numeric dimensions
+            for col in numeric_cols:
+                dimensions.append(dict(
+                    label=col,
+                    values=active_df[col]
+                ))
+            
+            # Add categorical dimensions (encode them)
+            for col in categorical_cols:
+                # Convert categorical to numeric codes
+                active_df[f'{col}_encoded'] = pd.Categorical(active_df[col]).codes
+                dimensions.append(dict(
+                    label=col,
+                    values=active_df[f'{col}_encoded'],
+                    tickvals=list(range(len(active_df[col].unique()))),
+                    ticktext=list(active_df[col].unique())
+                ))
+            
+            # Prepare color scale
+            if color_by and color_by in active_df.columns:
+                if color_by in numeric_cols:
+                    color_values = active_df[color_by]
+                    colorscale = 'Viridis'
+                else:
+                    color_values = active_df[f'{color_by}_encoded']
+                    colorscale = 'Viridis'
+            else:
+                # Default to first numeric column
+                if numeric_cols:
+                    color_values = active_df[numeric_cols[0]]
+                    colorscale = 'Viridis'
+                else:
+                    color_values = list(range(len(active_df)))
+                    colorscale = 'Viridis'
+            
+            # Create parallel coordinates plot
+            fig = go.Figure(data=
+                go.Parcoords(
+                    line=dict(
+                        color=color_values,
+                        colorscale=colorscale,
+                        showscale=True,
+                        cmin=min(color_values) if len(color_values) > 0 else 0,
+                        cmax=max(color_values) if len(color_values) > 0 else 1
+                    ),
+                    dimensions=dimensions
+                )
+            )
+            
+            # Update layout
+            fig.update_layout(
+                title=f"Parallel Coordinates Plot - {os.path.basename(self.csv_file_path)}",
+                font=dict(size=12),
+                height=700,
+                margin=dict(l=100, r=100, t=100, b=50)
+            )
+            
+            # Save as HTML
+            fig.write_html(output_path, include_plotlyjs='cdn')
+            
+            # Reset UI state
+            self.root.config(cursor="")
+            self.generate_btn.config(state=tk.NORMAL)
+            
+            messagebox.showinfo("Success", f"Plotly visualization saved to:\n{output_path}")
+            self.view_btn.config(state=tk.NORMAL)
+            
+        except Exception as e:
+            self.root.config(cursor="")
+            self.generate_btn.config(state=tk.NORMAL)
+            
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Error generating Plotly HTML: {str(e)}\n{error_details}")
+            messagebox.showerror("Error", f"Failed to generate Plotly HTML: {str(e)}")
     
     def _configure_experiment(self, experiment, active_df):
         """Configure the HiPlot experiment"""
