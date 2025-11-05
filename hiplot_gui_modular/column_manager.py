@@ -18,6 +18,7 @@ class ColumnManager:
         self.active_columns = {}
         self.column_buttons = {}
         self.column_mapping = {}
+        self.column_filters = {}  # Store filters per column {column_name: [excluded_values]}
         self.columns_grid_frame = None
         
         # Callbacks
@@ -135,6 +136,8 @@ class ColumnManager:
     
     def toggle_column(self, column, button):
         """Toggle a column's active state"""
+        has_filter = column in self.column_filters
+        
         if self.active_columns[column]:
             # Deactivate
             self.active_columns[column] = False
@@ -142,7 +145,11 @@ class ColumnManager:
         else:
             # Activate
             self.active_columns[column] = True
-            button.config(bg="light green", activebackground="light green")
+            # Use yellow if filter is active, otherwise green
+            if has_filter:
+                button.config(bg="yellow", activebackground="yellow")
+            else:
+                button.config(bg="light green", activebackground="light green")
         
         # Notify parent of changes
         if self.on_columns_updated_callback:
@@ -175,6 +182,20 @@ class ColumnManager:
             command=self.deselect_all_columns
         )
         
+        context_menu.add_separator()
+        
+        # Show filter info if filter is active
+        if original_column in self.column_filters:
+            num_excluded = len(self.column_filters[original_column])
+            context_menu.add_command(
+                label=f"Filter Active ({num_excluded} value(s) excluded)",
+                state=tk.DISABLED
+            )
+            context_menu.add_command(
+                label="Clear Filter",
+                command=lambda: self._clear_column_filter(original_column)
+            )
+        
         # Show menu
         try:
             context_menu.tk_popup(event.x_root, event.y_root)
@@ -200,8 +221,57 @@ class ColumnManager:
     
     def show_column_data(self, column_name):
         """Show column data in viewer window"""
-        viewer = DataViewer(self.parent, self.df, column_name)
+        def on_filter_changed(col_name, excluded_values):
+            """Callback when filter is applied or cleared"""
+            if excluded_values is None or len(excluded_values) == 0:
+                # Clear filter
+                if col_name in self.column_filters:
+                    del self.column_filters[col_name]
+            else:
+                # Apply filter
+                self.column_filters[col_name] = excluded_values
+            
+            # Update button color
+            self._update_column_button_color(col_name)
+            
+            # Notify parent
+            if self.on_columns_updated_callback:
+                self.on_columns_updated_callback()
+        
+        # Get existing filter for this column
+        existing_filter = self.column_filters.get(column_name, None)
+        
+        # Pass existing filter to viewer so it can restore checkbox states
+        viewer = DataViewer(self.parent, self.df, column_name, on_filter_changed, existing_filter)
         viewer.show()
+    
+    def _update_column_button_color(self, column_name):
+        """Update button color based on filter state"""
+        if column_name in self.column_buttons:
+            button = self.column_buttons[column_name]
+            is_active = self.active_columns.get(column_name, True)
+            has_filter = column_name in self.column_filters
+            
+            if has_filter:
+                # Yellow for filtered columns
+                button.config(bg="yellow", activebackground="yellow")
+            elif is_active:
+                # Green for active columns
+                button.config(bg="light green", activebackground="light green")
+            else:
+                # Gray for inactive columns
+                button.config(bg="light gray", activebackground="light gray")
+    
+    def _clear_column_filter(self, column_name):
+        """Clear filter for a specific column"""
+        if column_name in self.column_filters:
+            del self.column_filters[column_name]
+            self._update_column_button_color(column_name)
+            
+            if self.on_columns_updated_callback:
+                self.on_columns_updated_callback()
+            
+            messagebox.showinfo("Filter Cleared", f"Filter cleared for column '{column_name}'")
     
     def remove_constant_columns(self):
         """Remove columns that have constant values"""
@@ -255,7 +325,7 @@ class ColumnManager:
         return active_cols
     
     def get_active_columns_df(self):
-        """Get DataFrame with only active columns and renamed as needed"""
+        """Get DataFrame with only active columns, renamed, and filtered as needed"""
         if self.df is None:
             return None
         
@@ -264,8 +334,17 @@ class ColumnManager:
         if not active_cols:
             return None
         
-        # Create copy with active columns
-        active_df = self.df[active_cols].copy()
+        # Start with full dataframe
+        filtered_df = self.df.copy()
+        
+        # Apply filters to exclude specific values
+        for col, excluded_values in self.column_filters.items():
+            if col in filtered_df.columns and len(excluded_values) > 0:
+                # Filter out rows where column value is in excluded_values
+                filtered_df = filtered_df[~filtered_df[col].isin(excluded_values)]
+        
+        # Select only active columns
+        active_df = filtered_df[active_cols].copy()
         
         # Apply renames
         rename_dict = {col: self.column_mapping[col] 
@@ -313,13 +392,8 @@ class ColumnManager:
                 is_active = previous_selection[column]
                 self.active_columns[column] = is_active
                 
-                # Update button appearance
-                if column in self.column_buttons:
-                    button = self.column_buttons[column]
-                    if is_active:
-                        button.config(bg="light green", activebackground="light green")
-                    else:
-                        button.config(bg="light gray", activebackground="light gray")
+                # Update button appearance (considering filter state)
+                self._update_column_button_color(column)
                 
                 matched_columns += 1
         

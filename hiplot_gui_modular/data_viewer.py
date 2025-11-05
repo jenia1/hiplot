@@ -11,11 +11,13 @@ import math
 class DataViewer:
     """Window for viewing and editing column data with pagination"""
     
-    def __init__(self, parent, df, column_name):
+    def __init__(self, parent, df, column_name, on_filter_changed_callback=None, existing_filter=None):
         self.parent = parent
         self.df = df
         self.column_name = column_name
         self.window = None
+        self.on_filter_changed_callback = on_filter_changed_callback
+        self.existing_filter = existing_filter  # Excluded values from previous session
         
         # Pagination settings
         self.rows_per_page = 100
@@ -24,6 +26,8 @@ class DataViewer:
         self.show_unique_only = tk.BooleanVar(value=False)
         self.page_var = tk.StringVar()
         self.value_entries = {}
+        self.value_checkboxes = {}  # For filtering unique values
+        self.all_unique_values = []  # Store all unique values for the column
     
     def show(self):
         """Show the data viewer window"""
@@ -182,17 +186,23 @@ class DataViewer:
         button_frame = tk.Frame(parent)
         button_frame.pack(fill=tk.X, pady=10)
         
+        # Filter info label
+        self.filter_info_label = tk.Label(button_frame, text="", fg="blue")
+        self.filter_info_label.pack(side=tk.LEFT, padx=10)
+        
         save_btn = tk.Button(
             button_frame, 
             text="Save Changes", 
-            command=self._save_changes
+            command=self._save_changes,
+            width=15
         )
         save_btn.pack(side=tk.LEFT, padx=10)
         
         cancel_btn = tk.Button(
             button_frame, 
             text="Cancel", 
-            command=self.window.destroy
+            command=self.window.destroy,
+            width=15
         )
         cancel_btn.pack(side=tk.LEFT, padx=10)
     
@@ -238,7 +248,7 @@ class DataViewer:
             self._show_all_values(column_data)
     
     def _show_unique_values(self, column_data):
-        """Display unique values with edit capability"""
+        """Display unique values with edit capability and filter checkboxes"""
         unique_values = column_data.dropna().unique()
         
         # Sort unique values
@@ -246,6 +256,9 @@ class DataViewer:
             unique_values = sorted(unique_values)
         except TypeError:
             unique_values = sorted(unique_values, key=str)
+        
+        # Store all unique values for filter application
+        self.all_unique_values = unique_values
         
         # Update pagination
         self.total_pages = math.ceil(len(unique_values) / self.rows_per_page)
@@ -257,24 +270,44 @@ class DataViewer:
         page_unique_values = unique_values[start_idx:end_idx]
         
         # Headers
-        tk.Label(self.scrollable_frame, text="Value", font=('bold'), width=20).grid(row=0, column=0, padx=5, pady=5)
-        tk.Label(self.scrollable_frame, text="New Value", font=('bold'), width=20).grid(row=0, column=1, padx=5, pady=5)
-        tk.Label(self.scrollable_frame, text="Occurrences", font=('bold'), width=10).grid(row=0, column=2, padx=5, pady=5)
+        tk.Label(self.scrollable_frame, text="Include", font=('bold'), width=8).grid(row=0, column=0, padx=5, pady=5)
+        tk.Label(self.scrollable_frame, text="Value", font=('bold'), width=20).grid(row=0, column=1, padx=5, pady=5)
+        tk.Label(self.scrollable_frame, text="New Value", font=('bold'), width=20).grid(row=0, column=2, padx=5, pady=5)
+        tk.Label(self.scrollable_frame, text="Occurrences", font=('bold'), width=10).grid(row=0, column=3, padx=5, pady=5)
         
         # Data rows
         for i, value in enumerate(page_unique_values, 1):
             occurrences = len(self.df[self.df[self.column_name] == value])
             original_value_str = str(value)
             
-            tk.Label(self.scrollable_frame, text=original_value_str, width=20).grid(row=i, column=0, padx=5, pady=2)
+            # Determine if this value should be checked based on existing filter
+            is_checked = True
+            if self.existing_filter is not None:
+                # If there's an existing filter, check if this value is excluded
+                is_excluded = any(str(excluded_val) == original_value_str for excluded_val in self.existing_filter)
+                is_checked = not is_excluded
+            
+            # Checkbox for filtering
+            var = tk.BooleanVar(value=is_checked)
+            checkbox = tk.Checkbutton(self.scrollable_frame, variable=var)
+            checkbox.grid(row=i, column=0, padx=5, pady=2)
+            self.value_checkboxes[original_value_str] = var
+            
+            tk.Label(self.scrollable_frame, text=original_value_str, width=20).grid(row=i, column=1, padx=5, pady=2)
             
             value_var = tk.StringVar(value=original_value_str)
             entry = tk.Entry(self.scrollable_frame, textvariable=value_var, width=20)
-            entry.grid(row=i, column=1, padx=5, pady=2)
+            entry.grid(row=i, column=2, padx=5, pady=2)
             
-            tk.Label(self.scrollable_frame, text=str(occurrences), width=10).grid(row=i, column=2, padx=5, pady=2)
+            tk.Label(self.scrollable_frame, text=str(occurrences), width=10).grid(row=i, column=3, padx=5, pady=2)
             
             self.value_entries[f"unique:{original_value_str}"] = value_var
+        
+        # Update filter info if there's an existing filter
+        if self.existing_filter and len(self.existing_filter) > 0:
+            self.filter_info_label.config(
+                text=f"Current filter: {len(self.existing_filter)} value(s) excluded"
+            )
     
     def _show_all_values(self, column_data):
         """Display all values with edit capability"""
@@ -307,17 +340,26 @@ class DataViewer:
             self.value_entries[idx] = value_var
     
     def _save_changes(self):
-        """Save the changes made to the data"""
+        """Save the changes made to the data and apply filters"""
         if self.df is None:
             return
         
         try:
+            # First handle data edits
             original_dtype = self.df[self.column_name].dtype
             
             if self.show_unique_only.get():
+                # Save data changes
                 self._save_unique_value_changes(original_dtype)
+                
+                # Apply filter based on checkboxes
+                self._apply_filter_from_checkboxes()
             else:
+                # Save individual changes
                 self._save_individual_changes(original_dtype)
+            
+            # Close window after saving
+            self.window.destroy()
                 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save changes: {str(e)}")
@@ -361,11 +403,6 @@ class DataViewer:
         # Apply mapping
         for old_val, new_val in value_mapping.items():
             self.df.loc[self.df[self.column_name] == old_val, self.column_name] = new_val
-        
-        if changes_made > 0:
-            messagebox.showinfo("Success", f"Changes to {changes_made} unique value(s) have been applied throughout the dataset")
-        else:
-            messagebox.showinfo("No Changes", "No changes were made to any values")
     
     def _save_individual_changes(self, original_dtype):
         """Save changes when in all values mode"""
@@ -393,9 +430,26 @@ class DataViewer:
                                 self.df.at[idx, self.column_name] = new_value
                         except ValueError:
                             self.df.at[idx, self.column_name] = new_value
+    
+    def _apply_filter_from_checkboxes(self):
+        """Apply filter based on checked/unchecked values (called from Save Changes)"""
+        # Get excluded values from checkboxes
+        excluded_values = []
+        for value_str, checkbox_var in self.value_checkboxes.items():
+            if not checkbox_var.get():
+                # Find the actual value (not string representation)
+                for val in self.all_unique_values:
+                    if str(val) == value_str:
+                        excluded_values.append(val)
+                        break
         
-        if changes_made > 0:
-            messagebox.showinfo("Success", f"Changes to {changes_made} value(s) have been saved")
+        # Check if all values are checked (no filter needed)
+        if not excluded_values:
+            # All values are checked - clear the filter
+            if self.on_filter_changed_callback:
+                self.on_filter_changed_callback(self.column_name, None)
         else:
-            messagebox.showinfo("No Changes", "No changes were made to any values")
+            # Apply the filter
+            if self.on_filter_changed_callback:
+                self.on_filter_changed_callback(self.column_name, excluded_values)
 
