@@ -74,7 +74,13 @@ def build_exe():
         cmd.append(f'--add-data={static_dir};hiplot/static')
         print(f"Adding static files: {static_dir}")
     
-    # Add icon if available
+    # Add icon file for runtime use (taskbar icon)
+    icon_file = os.path.join(current_dir, 'spaghetti.ico')
+    if os.path.exists(icon_file):
+        cmd.append(f'--add-data={icon_file};.')
+        print(f"Adding icon for runtime: {icon_file}")
+    
+    # Add icon if available (for exe file icon)
     if icon_path:
         cmd.append(f'--icon={icon_path}')
     

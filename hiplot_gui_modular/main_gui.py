@@ -413,8 +413,8 @@ class HiPlotGUI:
             # Configure visualization
             self._configure_experiment(experiment, active_df)
             
-            # Save HTML
-            experiment.to_html(output_path)
+            # Save HTML with offline mode (no CDN)
+            experiment.to_html(output_path, offline=True)
             
             # Cleanup
             self._cleanup_temp_file(temp_csv_path)
@@ -454,20 +454,13 @@ class HiPlotGUI:
                 import plotly.graph_objects as go
                 import plotly.express as px
             except ImportError:
-                response = messagebox.askyesno(
-                    "Plotly Not Installed",
-                    "Plotly is not installed. Would you like to install it now?\n\n"
-                    "This will run: pip install plotly",
-                    icon='question'
+                messagebox.showerror(
+                    "Plotly Not Available",
+                    "Plotly library is not available.\n\n"
+                    "Please use the HiPlot visualization option instead, or reinstall the application.",
+                    icon='error'
                 )
-                if response:
-                    import subprocess
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", "plotly"])
-                    import plotly.graph_objects as go
-                    import plotly.express as px
-                    messagebox.showinfo("Success", "Plotly has been installed successfully!")
-                else:
-                    return
+                return
             
             # Show loading state
             self.root.config(cursor="wait")
@@ -549,8 +542,8 @@ class HiPlotGUI:
                 margin=dict(l=100, r=100, t=100, b=50)
             )
             
-            # Save as HTML
-            fig.write_html(output_path, include_plotlyjs='cdn')
+            # Save as HTML with embedded Plotly (no CDN - works offline)
+            fig.write_html(output_path, include_plotlyjs=True)
             
             # Reset UI state
             self.root.config(cursor="")
