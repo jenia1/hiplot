@@ -15,6 +15,38 @@ from utils import resource_path, configure_window_size
 from column_manager import ColumnManager
 from expression_dialog import ExpressionDialog
 
+# Fix HiPlot paths for PyInstaller bundle - make it work offline
+try:
+    if getattr(sys, 'frozen', False):
+        # Running in PyInstaller bundle - HiPlot can't find its template/static files
+        # We need to monkey-patch it to use the correct bundled paths
+        import hiplot.render
+        
+        bundled_hiplot_dir = Path(sys._MEIPASS) / 'hiplot'
+        
+        # Patch get_index_html_template to use bundled templates
+        _original_get_index_html_template = hiplot.render.get_index_html_template
+        
+        def _patched_get_index_html_template():
+            return hiplot.render.render_jinja_html(str(bundled_hiplot_dir / "templates"), "index.html")
+        
+        hiplot.render.get_index_html_template = _patched_get_index_html_template
+        
+        # Patch get_js_bundle to use bundled static files
+        _original_get_js_bundle = hiplot.render.get_js_bundle
+        
+        def _patched_get_js_bundle(src: str) -> str:
+            file = bundled_hiplot_dir / src
+            if not file.exists():
+                return ""
+            with open(str(file), 'r', encoding='utf-8') as f:
+                return f.read()
+        
+        hiplot.render.get_js_bundle = _patched_get_js_bundle
+        print("HiPlot patched for offline use in PyInstaller bundle")
+except Exception as e:
+    print(f"Warning: Could not patch HiPlot for offline use: {e}")
+
 
 class HiPlotGUI:
     """Main GUI application for HiPlot visualization"""
@@ -413,8 +445,8 @@ class HiPlotGUI:
             # Configure visualization
             self._configure_experiment(experiment, active_df)
             
-            # Save HTML with offline mode (no CDN)
-            experiment.to_html(output_path, offline=True)
+            # Save HTML (will use bundled static files via monkey-patch)
+            experiment.to_html(output_path)
             
             # Cleanup
             self._cleanup_temp_file(temp_csv_path)

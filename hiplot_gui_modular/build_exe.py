@@ -80,6 +80,12 @@ def build_exe():
         cmd.append(f'--add-data={icon_file};.')
         print(f"Adding icon for runtime: {icon_file}")
     
+    # Add test script for debugging HiPlot offline issues
+    test_script = os.path.join(current_dir, 'test_hiplot_offline.py')
+    if os.path.exists(test_script):
+        cmd.append(f'--add-data={test_script};.')
+        print(f"Adding test script: {test_script}")
+    
     # Add icon if available (for exe file icon)
     if icon_path:
         cmd.append(f'--icon={icon_path}')
