@@ -4,6 +4,7 @@ Optimized Parameters module for organizing and exporting parameter configuration
 import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
 import pandas as pd
+import numpy as np
 import os
 
 
@@ -235,6 +236,11 @@ class OptimizedParamsWindow:
         
         # Store condition definitions: {column_name: [list of conditions]}
         self.condition_definitions = {}
+        
+        # Store results from processing
+        self.results_df = None
+        self.filtered_df = None
+        self.analysis_summary = None
         
         # UI components
         self.all_columns_listbox = None
@@ -553,15 +559,19 @@ class OptimizedParamsWindow:
                 result = dialog.show()
                 
                 if result is not None:  # User clicked Save
-                    # Add to conditions list
-                    self.conditions.append(item)
-                    
-                    # Store condition definitions
-                    if result:  # If there are conditions defined
+                    # Only add to conditions list if there are actual conditions defined
+                    if result and len(result) > 0:  # If there are conditions defined
+                        self.conditions.append(item)
                         self.condition_definitions[item] = result
-                    elif item in self.condition_definitions:
-                        # Remove if no conditions defined
-                        del self.condition_definitions[item]
+                    else:
+                        # Don't add to conditions if no conditions defined
+                        if item in self.condition_definitions:
+                            del self.condition_definitions[item]
+                        messagebox.showinfo(
+                            "No Conditions Defined",
+                            f"'{item}' was not added to Conditions section because no conditions were defined.\n\n"
+                            "Please add at least one condition to include this column."
+                        )
                     
                     # Update display
                     self._refresh_conditions_display()
@@ -670,11 +680,19 @@ class OptimizedParamsWindow:
         result = dialog.show()
         
         if result is not None:  # User clicked Save
-            if result:  # If there are conditions defined
+            if result and len(result) > 0:  # If there are conditions defined
                 self.condition_definitions[column_name] = result
-            elif column_name in self.condition_definitions:
-                # Remove if no conditions defined
-                del self.condition_definitions[column_name]
+            else:
+                # Remove from conditions section if no conditions defined
+                if column_name in self.condition_definitions:
+                    del self.condition_definitions[column_name]
+                if column_name in self.conditions:
+                    self.conditions.remove(column_name)
+                messagebox.showinfo(
+                    "Removed from Conditions",
+                    f"'{column_name}' was removed from Conditions section because all conditions were cleared.\n\n"
+                    "Add it back with at least one condition to include it."
+                )
             
             # Refresh display
             self._refresh_conditions_display()
@@ -744,29 +762,496 @@ class OptimizedParamsWindow:
         return export_data
     
     def _start_processing(self):
-        """Handle the Start button click"""
-        # Placeholder for start processing logic
-        if not self.inputs and not self.conditions and not self.apply_to_all:
+        """Handle the Start button click - find optimized parameters"""
+        # Validate configuration
+        if not self.inputs:
             messagebox.showwarning(
-                "No Configuration",
-                "Please configure at least one section (Inputs, Conditions, or Apply to All) before starting"
+                "Missing Configuration",
+                "Please add at least one column to the 'Inputs' section"
             )
             return
         
-        messagebox.showinfo(
-            "Start Processing",
-            f"Configuration:\n\n"
-            f"Inputs: {len(self.inputs)} columns\n"
-            f"Conditions: {len(self.conditions)} columns\n"
-            f"Apply to All: {len(self.apply_to_all)} columns\n\n"
-            f"Processing will be implemented here."
-        )
+        if not self.apply_to_all:
+            messagebox.showwarning(
+                "Missing Configuration",
+                "Please add at least one column to the 'Apply to All' section"
+            )
+            return
+        
+        # Validate that all conditions have defined filters
+        conditions_without_definitions = []
+        for col in self.conditions:
+            if col not in self.condition_definitions or not self.condition_definitions[col]:
+                conditions_without_definitions.append(col)
+        
+        if conditions_without_definitions:
+            messagebox.showerror(
+                "Invalid Conditions",
+                f"The following columns in 'Conditions' section have no conditions defined:\n\n" +
+                "\n".join(conditions_without_definitions) +
+                "\n\nPlease either:\n" +
+                "1. Define conditions for these columns, or\n" +
+                "2. Remove them from the Conditions section"
+            )
+            return
+        
+        # Validate that all columns exist in the dataframe
+        all_required_columns = set(self.inputs + self.conditions + self.apply_to_all)
+        missing_columns = [col for col in all_required_columns if col not in self.df.columns]
+        
+        if missing_columns:
+            messagebox.showerror(
+                "Missing Columns",
+                f"The following columns are not found in the loaded data:\n\n" +
+                "\n".join(missing_columns) +
+                "\n\nPlease check your column selections."
+            )
+            return
+        
+        try:
+            # Show processing message
+            progress_window = self._show_progress_window("Processing data...")
+            self.window.update()
+            
+            # Step 1: Filter data by conditions
+            self._update_progress(progress_window, "Step 1/3: Filtering data by conditions...")
+            filtered_df = self._apply_conditions_filter()
+            
+            if filtered_df.empty:
+                progress_window.destroy()
+                messagebox.showwarning(
+                    "No Data",
+                    "No data remains after applying conditions. Please adjust your conditions."
+                )
+                return
+            
+            # Step 2: Find optimized parameters
+            self._update_progress(progress_window, "Step 2/3: Analyzing parameter combinations...")
+            results = self._find_optimized_parameters(filtered_df)
+            
+            # Step 3: Store results
+            self._update_progress(progress_window, "Step 3/3: Preparing results...")
+            self.filtered_df = filtered_df
+            self.results_df = results['results_df']
+            self.analysis_summary = results['summary']
+            
+            progress_window.destroy()
+            
+            # Show completion message with detailed info
+            conditions_summary = ""
+            if self.conditions:
+                conditions_summary = "\nConditions Applied:\n"
+                for col in self.conditions:
+                    cond_list = self.condition_definitions.get(col, [])
+                    for cond in cond_list:
+                        conditions_summary += f"  • {col} {cond['operator']} {cond['value']}\n"
+            
+            messagebox.showinfo(
+                "Processing Complete",
+                f"Analysis completed successfully!\n\n"
+                f"Original data: {len(self.df)} rows\n"
+                f"Filtered data: {len(filtered_df)} rows\n"
+                f"{conditions_summary}\n"
+                f"Unique input combinations: {results['summary']['total_input_combinations']}\n"
+                f"Optimized combinations: {results['summary']['optimized_combinations']}\n"
+                f"Apply to All groups: {results['summary']['total_groups']}\n\n"
+                f"Click 'Show Results' to view details."
+            )
+            
+        except Exception as e:
+            if 'progress_window' in locals():
+                progress_window.destroy()
+            
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Error during processing: {str(e)}\n{error_details}")
+            messagebox.showerror(
+                "Processing Error",
+                f"An error occurred during processing:\n\n{str(e)}"
+            )
+    
+    def _show_progress_window(self, message):
+        """Show a progress window"""
+        progress = tk.Toplevel(self.window)
+        progress.title("Processing")
+        progress.geometry("400x100")
+        progress.transient(self.window)
+        
+        label = tk.Label(progress, text=message, padx=20, pady=20)
+        label.pack()
+        
+        progress.progress_label = label
+        return progress
+    
+    def _update_progress(self, progress_window, message):
+        """Update progress window message"""
+        if progress_window and hasattr(progress_window, 'progress_label'):
+            progress_window.progress_label.config(text=message)
+            progress_window.update()
+    
+    def _apply_conditions_filter(self):
+        """Apply all condition filters to the dataframe"""
+        filtered_df = self.df.copy()
+        
+        # Apply each condition
+        for column_name in self.conditions:
+            if column_name not in filtered_df.columns:
+                raise ValueError(f"Condition column '{column_name}' not found in data")
+            
+            conditions_list = self.condition_definitions.get(column_name, [])
+            
+            # Skip if no conditions defined (safety check - shouldn't happen with new validation)
+            if not conditions_list:
+                print(f"Warning: Column '{column_name}' in Conditions section has no defined conditions. Skipping.")
+                continue
+            
+            for condition in conditions_list:
+                operator = condition['operator']
+                value = condition['value']
+                
+                # Apply the condition filter
+                if operator == '>':
+                    filtered_df = filtered_df[filtered_df[column_name] > value]
+                elif operator == '>=':
+                    filtered_df = filtered_df[filtered_df[column_name] >= value]
+                elif operator == '<':
+                    filtered_df = filtered_df[filtered_df[column_name] < value]
+                elif operator == '<=':
+                    filtered_df = filtered_df[filtered_df[column_name] <= value]
+                elif operator == '==':
+                    filtered_df = filtered_df[filtered_df[column_name] == value]
+                elif operator == '!=':
+                    filtered_df = filtered_df[filtered_df[column_name] != value]
+        
+        return filtered_df
+    
+    def _find_optimized_parameters(self, filtered_df):
+        """Find input combinations that exist across all 'Apply to All' groups"""
+        # Validate columns exist
+        for col in self.inputs:
+            if col not in filtered_df.columns:
+                raise ValueError(f"Input column '{col}' not found in data")
+        
+        for col in self.apply_to_all:
+            if col not in filtered_df.columns:
+                raise ValueError(f"Apply to All column '{col}' not found in data")
+        
+        # IMPORTANT: Get ALL unique groups from ORIGINAL dataframe (before filtering)
+        # This ensures we check against all possible groups, not just those that remain after filtering
+        if len(self.apply_to_all) == 1:
+            all_groups = self.df[self.apply_to_all[0]].unique()  # Use self.df, not filtered_df
+            group_col_name = self.apply_to_all[0]
+        else:
+            # Create combined group column for multiple "Apply to All" columns
+            group_col_name = '_'.join(self.apply_to_all)
+            self.df[group_col_name] = self.df[self.apply_to_all].apply(
+                lambda row: '_'.join(map(str, row)), axis=1
+            )
+            filtered_df[group_col_name] = filtered_df[self.apply_to_all].apply(
+                lambda row: '_'.join(map(str, row)), axis=1
+            )
+            all_groups = self.df[group_col_name].unique()
+        
+        total_groups = len(all_groups)  # Total groups from original data, not filtered
+        
+        # Get all unique input combinations across all data
+        if len(self.inputs) == 1:
+            all_input_combos = set(filtered_df[self.inputs[0]].unique())
+            input_combo_col = self.inputs[0]
+        else:
+            # Create combined input column
+            input_combo_col = '_'.join(self.inputs)
+            filtered_df[input_combo_col] = filtered_df[self.inputs].apply(
+                lambda row: tuple(row), axis=1
+            )
+            all_input_combos = set(filtered_df[input_combo_col].unique())
+        
+        # For each group (from ALL groups, not just filtered), find which input combinations exist
+        group_input_map = {}
+        for group in all_groups:  # Use all_groups from original data
+            group_data = filtered_df[filtered_df[group_col_name] == group]
+            if len(self.inputs) == 1:
+                # If group has no data after filtering, it has no combinations
+                group_inputs = set(group_data[input_combo_col].unique()) if not group_data.empty else set()
+            else:
+                group_inputs = set(group_data[input_combo_col].unique()) if not group_data.empty else set()
+            group_input_map[group] = group_inputs
+        
+        # Find input combinations that appear in ALL groups (optimized parameters)
+        optimized_combos = all_input_combos.copy()
+        for group_inputs in group_input_map.values():
+            optimized_combos = optimized_combos.intersection(group_inputs)
+        
+        # Create results dataframe
+        results_data = []
+        
+        for combo in all_input_combos:
+            # Count in how many groups this combination appears
+            appears_in_groups = sum(1 for group_inputs in group_input_map.values() 
+                                   if combo in group_inputs)
+            
+            is_optimized = combo in optimized_combos
+            
+            # Determine which groups have/miss this combination
+            present_in = [str(group) for group, group_inputs in group_input_map.items() 
+                         if combo in group_inputs]
+            missing_in = [str(group) for group, group_inputs in group_input_map.items() 
+                         if combo not in group_inputs]
+            
+            # Extract individual input values
+            if len(self.inputs) == 1:
+                input_values = {self.inputs[0]: combo}
+            else:
+                input_values = {self.inputs[i]: combo[i] for i in range(len(self.inputs))}
+            
+            row = {
+                **input_values,
+                'Appears_in_Groups': appears_in_groups,
+                'Total_Groups': total_groups,
+                'Is_Optimized': 'Yes' if is_optimized else 'No',
+                'Coverage_Percent': (appears_in_groups / total_groups * 100),
+                'Present_in': ', '.join(present_in) if present_in else 'None',
+                'Missing_in': ', '.join(missing_in) if missing_in else 'None'
+            }
+            results_data.append(row)
+        
+        # Create DataFrame and sort by coverage
+        results_df = pd.DataFrame(results_data)
+        results_df = results_df.sort_values('Coverage_Percent', ascending=False)
+        
+        # Create summary with group details (for ALL groups, including those with 0 rows after filtering)
+        group_details = {}
+        for group in all_groups:  # Use all_groups from original data
+            group_data = filtered_df[filtered_df[group_col_name] == group]
+            group_details[str(group)] = {
+                'rows': len(group_data),
+                'unique_combinations': len(group_input_map[group])
+            }
+        
+        summary = {
+            'total_input_combinations': len(all_input_combos),
+            'optimized_combinations': len(optimized_combos),
+            'total_groups': total_groups,
+            'input_columns': self.inputs.copy(),
+            'apply_to_all_columns': self.apply_to_all.copy(),
+            'condition_columns': self.conditions.copy(),
+            'filtered_rows': len(filtered_df),
+            'group_details': group_details
+        }
+        
+        return {
+            'results_df': results_df,
+            'summary': summary
+        }
     
     def _show_results(self):
         """Handle the Show Results button click"""
-        # Placeholder for show results logic
-        messagebox.showinfo(
-            "Show Results",
-            "Results display will be implemented here."
+        if self.results_df is None or self.analysis_summary is None:
+            messagebox.showwarning(
+                "No Results",
+                "Please click 'Start' to process the data first."
+            )
+            return
+        
+        # Create results window
+        results_window = tk.Toplevel(self.window)
+        results_window.title("Optimized Parameters Results")
+        results_window.geometry("1000x700")
+        
+        # Main frame
+        main_frame = tk.Frame(results_window, padx=15, pady=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Summary section
+        summary_frame = tk.LabelFrame(main_frame, text="Analysis Summary", padx=10, pady=10)
+        summary_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Build conditions summary
+        conditions_text = "None"
+        if self.analysis_summary['condition_columns']:
+            conditions_text = ""
+            for col in self.analysis_summary['condition_columns']:
+                cond_list = self.condition_definitions.get(col, [])
+                for cond in cond_list:
+                    conditions_text += f"{col} {cond['operator']} {cond['value']}; "
+            conditions_text = conditions_text.rstrip("; ")
+        
+        # Build group details
+        group_details_text = "\n\nGroup Details (after filtering):\n"
+        for group, details in self.analysis_summary.get('group_details', {}).items():
+            group_details_text += f"  • {group}: {details['rows']} rows, {details['unique_combinations']} unique input combinations\n"
+        
+        summary_text = (
+            f"Input Parameters: {', '.join(self.analysis_summary['input_columns'])}\n"
+            f"Apply to All: {', '.join(self.analysis_summary['apply_to_all_columns'])}\n"
+            f"Conditions: {conditions_text}\n"
+            f"Filtered Rows: {self.analysis_summary['filtered_rows']}\n"
+            f"Total Groups: {self.analysis_summary['total_groups']}\n"
+            f"Total Input Combinations: {self.analysis_summary['total_input_combinations']}\n"
+            f"Optimized Combinations (100% coverage): {self.analysis_summary['optimized_combinations']}"
+            f"{group_details_text}"
         )
+        
+        summary_label = tk.Label(summary_frame, text=summary_text, justify='left', font=('TkDefaultFont', 9))
+        summary_label.pack(anchor='w')
+        
+        # Results table section
+        table_frame = tk.LabelFrame(main_frame, text="Results Table", padx=10, pady=10)
+        table_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        # Create Treeview with scrollbars
+        tree_container = tk.Frame(table_frame)
+        tree_container.pack(fill=tk.BOTH, expand=True)
+        
+        # Scrollbars
+        vsb = ttk.Scrollbar(tree_container, orient="vertical")
+        hsb = ttk.Scrollbar(tree_container, orient="horizontal")
+        
+        # Create Treeview
+        columns = list(self.results_df.columns)
+        tree = ttk.Treeview(
+            tree_container,
+            columns=columns,
+            show='tree headings',
+            yscrollcommand=vsb.set,
+            xscrollcommand=hsb.set
+        )
+        
+        vsb.config(command=tree.yview)
+        hsb.config(command=tree.xview)
+        
+        # Pack scrollbars and treeview
+        vsb.pack(side='right', fill='y')
+        hsb.pack(side='bottom', fill='x')
+        tree.pack(side='left', fill='both', expand=True)
+        
+        # Configure columns
+        tree.column('#0', width=50, minwidth=50)
+        tree.heading('#0', text='#')
+        
+        for col in columns:
+            tree.column(col, width=120, minwidth=80)
+            tree.heading(col, text=col)
+        
+        # Add data to treeview
+        for idx, row in self.results_df.iterrows():
+            values = [row[col] for col in columns]
+            # Format numeric values
+            formatted_values = []
+            for val in values:
+                if isinstance(val, float):
+                    formatted_values.append(f"{val:.2f}")
+                else:
+                    formatted_values.append(str(val))
+            
+            # Color code based on optimization status
+            tag = 'optimized' if row['Is_Optimized'] == 'Yes' else 'not_optimized'
+            tree.insert('', 'end', text=str(idx + 1), values=formatted_values, tags=(tag,))
+        
+        # Configure tags for color coding
+        tree.tag_configure('optimized', background='light green')
+        tree.tag_configure('not_optimized', background='light yellow')
+        
+        # Buttons frame
+        button_frame = tk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        
+        # Export results button
+        export_btn = tk.Button(
+            button_frame,
+            text="Export Results to CSV",
+            command=lambda: self._export_results_to_csv(),
+            width=20,
+            height=2,
+            bg="light blue"
+        )
+        export_btn.pack(side=tk.LEFT, padx=10)
+        
+        # Filter optimized only
+        filter_btn = tk.Button(
+            button_frame,
+            text="Show Optimized Only",
+            command=lambda: self._show_optimized_only(tree),
+            width=20,
+            height=2,
+            bg="light green"
+        )
+        filter_btn.pack(side=tk.LEFT, padx=10)
+        
+        # Show all
+        show_all_btn = tk.Button(
+            button_frame,
+            text="Show All",
+            command=lambda: self._populate_results_tree(tree),
+            width=15,
+            height=2
+        )
+        show_all_btn.pack(side=tk.LEFT, padx=10)
+        
+        # Close button
+        close_btn = tk.Button(
+            button_frame,
+            text="Close",
+            command=results_window.destroy,
+            width=15,
+            height=2
+        )
+        close_btn.pack(side=tk.RIGHT, padx=10)
+    
+    def _populate_results_tree(self, tree, filter_optimized=False):
+        """Populate results tree with data"""
+        # Clear existing items
+        for item in tree.get_children():
+            tree.delete(item)
+        
+        # Filter if needed
+        if filter_optimized:
+            df_to_show = self.results_df[self.results_df['Is_Optimized'] == 'Yes']
+        else:
+            df_to_show = self.results_df
+        
+        columns = list(df_to_show.columns)
+        
+        # Add data
+        for idx, row in df_to_show.iterrows():
+            values = [row[col] for col in columns]
+            formatted_values = []
+            for val in values:
+                if isinstance(val, float):
+                    formatted_values.append(f"{val:.2f}")
+                else:
+                    formatted_values.append(str(val))
+            
+            tag = 'optimized' if row['Is_Optimized'] == 'Yes' else 'not_optimized'
+            tree.insert('', 'end', text=str(idx + 1), values=formatted_values, tags=(tag,))
+    
+    def _show_optimized_only(self, tree):
+        """Show only optimized parameters in the tree"""
+        self._populate_results_tree(tree, filter_optimized=True)
+    
+    def _export_results_to_csv(self):
+        """Export the results dataframe to CSV"""
+        if self.results_df is None:
+            messagebox.showwarning("No Results", "No results to export")
+            return
+        
+        # Ask for save location
+        file_path = filedialog.asksaveasfilename(
+            title="Export Results",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile="optimized_parameters_results.csv"
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            self.results_df.to_csv(file_path, index=False)
+            messagebox.showinfo(
+                "Export Successful",
+                f"Results exported to:\n{file_path}"
+            )
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export: {str(e)}")
 
