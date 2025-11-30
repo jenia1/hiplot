@@ -14,6 +14,7 @@ import hiplot as hip
 from utils import resource_path, configure_window_size
 from column_manager import ColumnManager
 from expression_dialog import ExpressionDialog
+from optimized_params import OptimizedParamsWindow
 
 # Fix HiPlot paths for PyInstaller bundle - make it work offline
 try:
@@ -160,6 +161,16 @@ class HiPlotGUI:
         )
         self.add_column_btn.pack(side=tk.LEFT, padx=10)
         
+        self.optimized_params_btn = tk.Button(
+            add_column_frame,
+            text="Optimized Parameters",
+            command=self.show_optimized_params,
+            width=20,
+            state=tk.DISABLED,
+            bg="light blue"
+        )
+        self.optimized_params_btn.pack(side=tk.LEFT, padx=10)
+        
         tk.Label(
             add_column_frame,
             text="(e.g., 'col1 + col2', 'col1 * 2', 'np.log(col1)')",
@@ -292,8 +303,9 @@ class HiPlotGUI:
                 # Adjust window size
                 configure_window_size(self.root, len(columns))
                 
-                # Enable add column button
+                # Enable add column button and optimized params button
                 self.add_column_btn.config(state=tk.NORMAL)
+                self.optimized_params_btn.config(state=tk.NORMAL)
                 
             except Exception as e:
                 self.file_label.config(text=f"Error: {os.path.basename(file_path)}")
@@ -374,6 +386,15 @@ class HiPlotGUI:
         
         dialog = ExpressionDialog(self.root, self.df, self.df_columns, on_column_created)
         dialog.show()
+    
+    def show_optimized_params(self):
+        """Show the optimized parameters window"""
+        if self.df is None:
+            messagebox.showwarning("Warning", "Please load a CSV file first")
+            return
+        
+        optimized_params_window = OptimizedParamsWindow(self.root, self.df, self.df_columns)
+        optimized_params_window.show()
     
     def browse_output_dir(self):
         """Browse for output directory"""
