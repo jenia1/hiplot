@@ -22,16 +22,28 @@ class ConditionDefinitionDialog:
         self.conditions_listbox = None
         self.operator_var = None
         self.value_entry = None
+        self.add_update_btn = None
+        
+        # Track which condition is being edited (-1 means adding new)
+        self.editing_index = -1
     
     def show(self):
         """Show the condition definition dialog"""
         self.window = tk.Toplevel(self.parent)
         self.window.title(f"Define Conditions for '{self.variable_name}'")
-        self.window.geometry("500x450")
+        self.window.geometry("500x420")
+        self.window.minsize(500, 420)
         self.window.transient(self.parent)
         self.window.grab_set()
         
         self._setup_ui()
+        
+        # Bind Enter key to the window
+        self.window.bind('<Return>', self._on_enter_key)
+        
+        # Bind arrow keys to change operator
+        self.window.bind('<Left>', self._on_left_arrow)
+        self.window.bind('<Right>', self._on_right_arrow)
         
         # Wait for window to close
         self.parent.wait_window(self.window)
@@ -50,37 +62,10 @@ class ConditionDefinitionDialog:
         )
         title_label.pack(pady=(0, 10))
         
-        # Existing conditions section
-        conditions_frame = tk.LabelFrame(
-            main_frame,
-            text="Defined Conditions",
-            padx=10,
-            pady=10
-        )
-        conditions_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        
-        # Listbox with scrollbar
-        list_frame = tk.Frame(conditions_frame)
-        list_frame.pack(fill=tk.BOTH, expand=True)
-        
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        self.conditions_listbox = tk.Listbox(
-            list_frame,
-            yscrollcommand=scrollbar.set,
-            font=('TkDefaultFont', 10)
-        )
-        self.conditions_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.conditions_listbox.yview)
-        
-        # Populate existing conditions
-        self._refresh_conditions_list()
-        
-        # Add condition section
+        # Add/Edit condition section (NOW ON TOP)
         add_frame = tk.LabelFrame(
             main_frame,
-            text="Add New Condition",
+            text="Add / Edit Condition",
             padx=10,
             pady=10
         )
@@ -112,25 +97,64 @@ class ConditionDefinitionDialog:
         self.value_entry = tk.Entry(value_frame, width=30)
         self.value_entry.pack(side=tk.LEFT, padx=5)
         
-        # Add button
-        add_btn = tk.Button(
-            add_frame,
+        # Buttons frame for Add/Update and Remove
+        btn_frame = tk.Frame(add_frame)
+        btn_frame.pack(fill=tk.X, pady=5)
+        
+        # Add/Update button
+        self.add_update_btn = tk.Button(
+            btn_frame,
             text="Add Condition",
-            command=self._add_condition,
+            command=self._add_or_update_condition,
             bg="light green",
             width=15
         )
-        add_btn.pack(pady=5)
+        self.add_update_btn.pack(side=tk.LEFT, padx=5)
         
-        # Remove button
-        remove_btn = tk.Button(
-            add_frame,
-            text="Remove Selected",
-            command=self._remove_condition,
-            bg="light coral",
-            width=15
+        # Clear/New button
+        clear_btn = tk.Button(
+            btn_frame,
+            text="Clear / New",
+            command=self._clear_selection,
+            width=12
         )
-        remove_btn.pack(pady=5)
+        clear_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Existing conditions section (NOW ON BOTTOM, SMALLER)
+        conditions_frame = tk.LabelFrame(
+            main_frame,
+            text="Defined Conditions (click to edit, Delete key to remove)",
+            padx=10,
+            pady=5
+        )
+        conditions_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        # Listbox with scrollbar (smaller height)
+        list_frame = tk.Frame(conditions_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.conditions_listbox = tk.Listbox(
+            list_frame,
+            yscrollcommand=scrollbar.set,
+            font=('TkDefaultFont', 10),
+            height=5,  # Smaller default height
+            selectmode=tk.SINGLE
+        )
+        self.conditions_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.conditions_listbox.yview)
+        
+        # Bind click to load condition into edit fields
+        self.conditions_listbox.bind('<<ListboxSelect>>', self._on_condition_select)
+        
+        # Bind Delete key to remove condition
+        self.conditions_listbox.bind('<Delete>', self._on_delete_key)
+        self.conditions_listbox.bind('<BackSpace>', self._on_delete_key)
+        
+        # Populate existing conditions
+        self._refresh_conditions_list()
         
         # Bottom buttons
         button_frame = tk.Frame(main_frame)
@@ -162,8 +186,83 @@ class ConditionDefinitionDialog:
             display_text = f"{condition['operator']} {condition['value']}"
             self.conditions_listbox.insert(tk.END, display_text)
     
-    def _add_condition(self):
-        """Add a new condition"""
+    def _on_condition_select(self, event):
+        """Handle condition selection - load into edit fields"""
+        selection = self.conditions_listbox.curselection()
+        if not selection:
+            return
+        
+        idx = selection[0]
+        self.editing_index = idx
+        
+        # Load the selected condition into the edit fields
+        condition = self.conditions[idx]
+        self.operator_var.set(condition['operator'])
+        self.value_entry.delete(0, tk.END)
+        self.value_entry.insert(0, str(condition['value']))
+        
+        # Update button text to indicate editing mode
+        self.add_update_btn.config(text="Update Condition", bg="light yellow")
+    
+    def _on_delete_key(self, event):
+        """Handle Delete key press to remove selected condition"""
+        selection = self.conditions_listbox.curselection()
+        if not selection:
+            return
+        
+        idx = selection[0]
+        del self.conditions[idx]
+        
+        # Reset editing state
+        self._clear_selection()
+        
+        # Refresh display
+        self._refresh_conditions_list()
+    
+    def _on_enter_key(self, event):
+        """Handle Enter key press"""
+        # Check if there's text in the value entry
+        value = self.value_entry.get().strip()
+        
+        if value:
+            # If there's a value, add/update the condition
+            self._add_or_update_condition()
+        else:
+            # If no value being entered, save and exit
+            self._save_conditions()
+    
+    def _on_left_arrow(self, event):
+        """Handle Left arrow key - move to previous operator"""
+        operators = [">", ">=", "<", "<=", "==", "!="]
+        current = self.operator_var.get()
+        try:
+            current_idx = operators.index(current)
+            new_idx = (current_idx - 1) % len(operators)
+            self.operator_var.set(operators[new_idx])
+        except ValueError:
+            self.operator_var.set(operators[0])
+    
+    def _on_right_arrow(self, event):
+        """Handle Right arrow key - move to next operator"""
+        operators = [">", ">=", "<", "<=", "==", "!="]
+        current = self.operator_var.get()
+        try:
+            current_idx = operators.index(current)
+            new_idx = (current_idx + 1) % len(operators)
+            self.operator_var.set(operators[new_idx])
+        except ValueError:
+            self.operator_var.set(operators[0])
+    
+    def _clear_selection(self):
+        """Clear the selection and reset to add mode"""
+        self.editing_index = -1
+        self.conditions_listbox.selection_clear(0, tk.END)
+        self.value_entry.delete(0, tk.END)
+        self.operator_var.set(">")
+        self.add_update_btn.config(text="Add Condition", bg="light green")
+    
+    def _add_or_update_condition(self):
+        """Add a new condition or update existing one"""
         operator = self.operator_var.get()
         value = self.value_entry.get().strip()
         
@@ -181,32 +280,22 @@ class ConditionDefinitionDialog:
             # Keep as string
             pass
         
-        # Add condition
+        # Create condition
         condition = {
             'operator': operator,
             'value': value
         }
-        self.conditions.append(condition)
         
-        # Refresh display
+        if self.editing_index >= 0:
+            # Update existing condition
+            self.conditions[self.editing_index] = condition
+        else:
+            # Add new condition
+            self.conditions.append(condition)
+        
+        # Refresh display and reset to add mode
         self._refresh_conditions_list()
-        
-        # Clear value entry
-        self.value_entry.delete(0, tk.END)
-    
-    def _remove_condition(self):
-        """Remove selected condition"""
-        selection = self.conditions_listbox.curselection()
-        if not selection:
-            messagebox.showwarning("No Selection", "Please select a condition to remove")
-            return
-        
-        # Remove in reverse order to avoid index issues
-        for idx in reversed(selection):
-            del self.conditions[idx]
-        
-        # Refresh display
-        self._refresh_conditions_list()
+        self._clear_selection()
     
     def _save_conditions(self):
         """Save conditions and close dialog"""
@@ -324,17 +413,6 @@ class OptimizedParamsWindow:
             font=('TkDefaultFont', 10, 'bold')
         )
         show_results_btn.pack(side=tk.LEFT, padx=10)
-        
-        # Export button
-        export_btn = tk.Button(
-            button_frame,
-            text="Export to CSV",
-            command=self._export_to_csv,
-            width=15,
-            height=2,
-            bg="light blue"
-        )
-        export_btn.pack(side=tk.LEFT, padx=10)
         
         # Clear all button
         clear_btn = tk.Button(
@@ -707,59 +785,6 @@ class OptimizedParamsWindow:
         column_name = self._extract_column_name(item_text)
         self._edit_condition(column_name)
     
-    def _export_to_csv(self):
-        """Export the optimized parameters configuration to CSV"""
-        if not self.inputs and not self.conditions and not self.apply_to_all:
-            messagebox.showwarning(
-                "Nothing to Export",
-                "Please move some columns to Inputs, Conditions, or Apply to All sections before exporting"
-            )
-            return
-        
-        # Ask for save location
-        file_path = filedialog.asksaveasfilename(
-            title="Export Optimized Parameters Configuration",
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            initialfile="optimized_parameters.csv"
-        )
-        
-        if not file_path:
-            return
-        
-        try:
-            # Create export data
-            export_data = self._prepare_export_data()
-            
-            # Save to CSV
-            export_df = pd.DataFrame(export_data)
-            export_df.to_csv(file_path, index=False)
-            
-            messagebox.showinfo(
-                "Export Successful",
-                f"Optimized parameters configuration saved to:\n{file_path}"
-            )
-            
-        except Exception as e:
-            messagebox.showerror("Export Error", f"Failed to export: {str(e)}")
-    
-    def _prepare_export_data(self):
-        """Prepare data for export in a structured format"""
-        # Determine the maximum length among all sections
-        max_length = max(
-            len(self.inputs),
-            len(self.conditions),
-            len(self.apply_to_all)
-        )
-        
-        # Create export data with aligned columns
-        export_data = {
-            'Inputs': self.inputs + [''] * (max_length - len(self.inputs)),
-            'Conditions': self.conditions + [''] * (max_length - len(self.conditions)),
-            'Apply_to_All': self.apply_to_all + [''] * (max_length - len(self.apply_to_all))
-        }
-        
-        return export_data
     
     def _start_processing(self):
         """Handle the Start button click - find optimized parameters"""
@@ -771,10 +796,13 @@ class OptimizedParamsWindow:
             )
             return
         
-        if not self.apply_to_all:
+        # If no "Apply to All" and no conditions, show warning
+        if not self.apply_to_all and not self.conditions:
             messagebox.showwarning(
                 "Missing Configuration",
-                "Please add at least one column to the 'Apply to All' section"
+                "Please add columns to either:\n"
+                "- 'Apply to All' section (to find inputs common across groups), or\n"
+                "- 'Conditions' section (to find inputs satisfying conditions)"
             )
             return
         
@@ -827,7 +855,12 @@ class OptimizedParamsWindow:
             
             # Step 2: Find optimized parameters
             self._update_progress(progress_window, "Step 2/3: Analyzing parameter combinations...")
-            results = self._find_optimized_parameters(filtered_df)
+            if self.apply_to_all:
+                # Normal mode: find inputs common across all groups
+                results = self._find_optimized_parameters(filtered_df)
+            else:
+                # Conditions-only mode: find all inputs satisfying conditions
+                results = self._find_inputs_satisfying_conditions(filtered_df)
             
             # Step 3: Store results
             self._update_progress(progress_window, "Step 3/3: Preparing results...")
@@ -837,26 +870,8 @@ class OptimizedParamsWindow:
             
             progress_window.destroy()
             
-            # Show completion message with detailed info
-            conditions_summary = ""
-            if self.conditions:
-                conditions_summary = "\nConditions Applied:\n"
-                for col in self.conditions:
-                    cond_list = self.condition_definitions.get(col, [])
-                    for cond in cond_list:
-                        conditions_summary += f"  • {col} {cond['operator']} {cond['value']}\n"
-            
-            messagebox.showinfo(
-                "Processing Complete",
-                f"Analysis completed successfully!\n\n"
-                f"Original data: {len(self.df)} rows\n"
-                f"Filtered data: {len(filtered_df)} rows\n"
-                f"{conditions_summary}\n"
-                f"Unique input combinations: {results['summary']['total_input_combinations']}\n"
-                f"Optimized combinations: {results['summary']['optimized_combinations']}\n"
-                f"Apply to All groups: {results['summary']['total_groups']}\n\n"
-                f"Click 'Show Results' to view details."
-            )
+            # Automatically open the results window
+            self._show_results()
             
         except Exception as e:
             if 'progress_window' in locals():
@@ -924,6 +939,66 @@ class OptimizedParamsWindow:
                     filtered_df = filtered_df[filtered_df[column_name] != value]
         
         return filtered_df
+    
+    def _find_inputs_satisfying_conditions(self, filtered_df):
+        """Find all input combinations that satisfy the conditions (no grouping)"""
+        # Validate columns exist
+        for col in self.inputs:
+            if col not in filtered_df.columns:
+                raise ValueError(f"Input column '{col}' not found in data")
+        
+        # Get all unique input combinations from filtered data
+        if len(self.inputs) == 1:
+            all_input_combos = filtered_df[self.inputs[0]].unique()
+            input_combo_col = self.inputs[0]
+        else:
+            # Create combined input column
+            input_combo_col = '_'.join(self.inputs)
+            filtered_df[input_combo_col] = filtered_df[self.inputs].apply(
+                lambda row: tuple(row), axis=1
+            )
+            all_input_combos = filtered_df[input_combo_col].unique()
+        
+        # Create results dataframe - all combinations are "optimized" since they satisfy conditions
+        results_data = []
+        
+        for combo in all_input_combos:
+            # Count how many rows have this combination
+            if len(self.inputs) == 1:
+                count = len(filtered_df[filtered_df[self.inputs[0]] == combo])
+                input_values = {self.inputs[0]: combo}
+            else:
+                count = len(filtered_df[filtered_df[input_combo_col] == combo])
+                input_values = {self.inputs[i]: combo[i] for i in range(len(self.inputs))}
+            
+            row = {
+                **input_values,
+                'Row_Count': count,
+                'Is_Optimized': 'Yes',  # All satisfy conditions
+                'Coverage_Percent': 100.0
+            }
+            results_data.append(row)
+        
+        # Create DataFrame and sort by row count
+        results_df = pd.DataFrame(results_data)
+        if not results_df.empty:
+            results_df = results_df.sort_values('Row_Count', ascending=False)
+        
+        summary = {
+            'total_input_combinations': len(all_input_combos),
+            'optimized_combinations': len(all_input_combos),  # All are optimized
+            'total_groups': 0,  # No grouping
+            'input_columns': self.inputs.copy(),
+            'apply_to_all_columns': [],
+            'condition_columns': self.conditions.copy(),
+            'filtered_rows': len(filtered_df),
+            'group_details': {}
+        }
+        
+        return {
+            'results_df': results_df,
+            'summary': summary
+        }
     
     def _find_optimized_parameters(self, filtered_df):
         """Find input combinations that exist across all 'Apply to All' groups"""
@@ -1076,21 +1151,33 @@ class OptimizedParamsWindow:
                     conditions_text += f"{col} {cond['operator']} {cond['value']}; "
             conditions_text = conditions_text.rstrip("; ")
         
-        # Build group details
-        group_details_text = "\n\nGroup Details (after filtering):\n"
-        for group, details in self.analysis_summary.get('group_details', {}).items():
-            group_details_text += f"  • {group}: {details['rows']} rows, {details['unique_combinations']} unique input combinations\n"
+        # Check if this is conditions-only mode (no Apply to All)
+        has_groups = self.analysis_summary['total_groups'] > 0
         
-        summary_text = (
-            f"Input Parameters: {', '.join(self.analysis_summary['input_columns'])}\n"
-            f"Apply to All: {', '.join(self.analysis_summary['apply_to_all_columns'])}\n"
-            f"Conditions: {conditions_text}\n"
-            f"Filtered Rows: {self.analysis_summary['filtered_rows']}\n"
-            f"Total Groups: {self.analysis_summary['total_groups']}\n"
-            f"Total Input Combinations: {self.analysis_summary['total_input_combinations']}\n"
-            f"Optimized Combinations (100% coverage): {self.analysis_summary['optimized_combinations']}"
-            f"{group_details_text}"
-        )
+        if has_groups:
+            # Build group details
+            group_details_text = "\n\nGroup Details (after filtering):\n"
+            for group, details in self.analysis_summary.get('group_details', {}).items():
+                group_details_text += f"  • {group}: {details['rows']} rows, {details['unique_combinations']} unique input combinations\n"
+            
+            summary_text = (
+                f"Input Parameters: {', '.join(self.analysis_summary['input_columns'])}\n"
+                f"Apply to All: {', '.join(self.analysis_summary['apply_to_all_columns'])}\n"
+                f"Conditions: {conditions_text}\n"
+                f"Filtered Rows: {self.analysis_summary['filtered_rows']}\n"
+                f"Total Groups: {self.analysis_summary['total_groups']}\n"
+                f"Total Input Combinations: {self.analysis_summary['total_input_combinations']}\n"
+                f"Optimized Combinations (100% coverage): {self.analysis_summary['optimized_combinations']}"
+                f"{group_details_text}"
+            )
+        else:
+            # Conditions-only mode summary
+            summary_text = (
+                f"Input Parameters: {', '.join(self.analysis_summary['input_columns'])}\n"
+                f"Conditions: {conditions_text}\n"
+                f"Filtered Rows: {self.analysis_summary['filtered_rows']}\n"
+                f"Input Combinations Satisfying Conditions: {self.analysis_summary['total_input_combinations']}"
+            )
         
         summary_label = tk.Label(summary_frame, text=summary_text, justify='left', font=('TkDefaultFont', 9))
         summary_label.pack(anchor='w')
@@ -1230,27 +1317,64 @@ class OptimizedParamsWindow:
         self._populate_results_tree(tree, filter_optimized=True)
     
     def _export_results_to_csv(self):
-        """Export the results dataframe to CSV"""
+        """Export the optimized parameters to CSV with all original columns from the loaded file"""
         if self.results_df is None:
             messagebox.showwarning("No Results", "No results to export")
             return
         
+        # Filter only optimized rows from results
+        optimized_results = self.results_df[self.results_df['Is_Optimized'] == 'Yes']
+        
+        if optimized_results.empty:
+            messagebox.showwarning(
+                "No Optimized Results",
+                "No optimized parameter combinations found to export.\n\n"
+                "Optimized parameters are those that exist across ALL groups."
+            )
+            return
+        
+        # Get the optimized input values
+        # Filter the original dataframe to get rows matching the optimized input combinations
+        if len(self.inputs) == 1:
+            # Single input column - get unique optimized values
+            optimized_values = optimized_results[self.inputs[0]].unique()
+            export_df = self.filtered_df[self.filtered_df[self.inputs[0]].isin(optimized_values)].copy()
+        else:
+            # Multiple input columns - match all input values together
+            # Create a set of tuples for efficient lookup
+            optimized_combos = set()
+            for _, row in optimized_results.iterrows():
+                combo = tuple(row[col] for col in self.inputs)
+                optimized_combos.add(combo)
+            
+            # Filter original data to match these combinations
+            def matches_optimized(row):
+                combo = tuple(row[col] for col in self.inputs)
+                return combo in optimized_combos
+            
+            mask = self.filtered_df.apply(matches_optimized, axis=1)
+            export_df = self.filtered_df[mask].copy()
+        
+        # Keep only the original columns from the loaded file (exclude any temporary columns)
+        original_columns = [col for col in self.df_columns if col in export_df.columns]
+        export_df = export_df[original_columns]
+        
         # Ask for save location
         file_path = filedialog.asksaveasfilename(
-            title="Export Results",
+            title="Export Optimized Parameters",
             defaultextension=".csv",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            initialfile="optimized_parameters_results.csv"
+            initialfile="optimized_parameters.csv"
         )
         
         if not file_path:
             return
         
         try:
-            self.results_df.to_csv(file_path, index=False)
+            export_df.to_csv(file_path, index=False)
             messagebox.showinfo(
                 "Export Successful",
-                f"Results exported to:\n{file_path}"
+                f"Exported {len(export_df)} rows with optimized parameter combinations to:\n{file_path}"
             )
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export: {str(e)}")
