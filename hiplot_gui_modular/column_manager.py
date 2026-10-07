@@ -43,9 +43,6 @@ class ColumnManager:
             empty_label.pack(padx=10, pady=10)
             return
         
-        # Reset column mapping
-        self.column_mapping = {}
-        
         # Calculate button sizing
         max_name_length = max([len(str(col)) for col in self.df_columns])
         base_width = get_text_width_estimate(max_name_length)
@@ -62,6 +59,10 @@ class ColumnManager:
         if previous_selection:
             self._apply_previous_selection(previous_selection)
         
+        # Sync button colors with selection and filter state
+        for column in self.df_columns:
+            self._update_column_button_color(column)
+        
         # Configure grid weights
         self._configure_grid_weights(cols_per_row)
         
@@ -75,7 +76,7 @@ class ColumnManager:
         row_idx = index // cols_per_row
         col_idx = index % cols_per_row
         
-        col_name = str(column)
+        col_name = str(self.column_mapping.get(column, column))
         font_size = self._get_font_size(col_name)
         
         button = tk.Button(
@@ -104,8 +105,8 @@ class ColumnManager:
                    lambda event, col=column, btn=button: 
                    self.show_column_context_menu(event, col, btn))
         
-        # Initialize as active
-        self.active_columns[column] = True
+        # Initialize as active (keep existing state when the grid is rebuilt)
+        self.active_columns.setdefault(column, True)
     
     def _get_font_size(self, col_name):
         """Determine appropriate font size based on column name length"""
@@ -136,20 +137,8 @@ class ColumnManager:
     
     def toggle_column(self, column, button):
         """Toggle a column's active state"""
-        has_filter = column in self.column_filters
-        
-        if self.active_columns[column]:
-            # Deactivate
-            self.active_columns[column] = False
-            button.config(bg="light gray", activebackground="light gray")
-        else:
-            # Activate
-            self.active_columns[column] = True
-            # Use yellow if filter is active, otherwise green
-            if has_filter:
-                button.config(bg="yellow", activebackground="yellow")
-            else:
-                button.config(bg="light green", activebackground="light green")
+        self.active_columns[column] = not self.active_columns.get(column, True)
+        self._update_column_button_color(column)
         
         # Notify parent of changes
         if self.on_columns_updated_callback:
@@ -212,7 +201,20 @@ class ColumnManager:
             parent=self.parent
         )
         
-        if new_name and new_name.strip() and new_name != current_name:
+        if new_name:
+            new_name = new_name.strip()
+        
+        if new_name and new_name != current_name:
+            other_names = {self.column_mapping.get(col, col)
+                           for col in self.df_columns if col != original_column}
+            if new_name in other_names:
+                messagebox.showwarning(
+                    "Name In Use",
+                    f"Another column is already named '{new_name}'. Please choose a different name.",
+                    parent=self.parent
+                )
+                return
+            
             button.config(text=new_name)
             self.column_mapping[original_column] = new_name
             
@@ -252,15 +254,15 @@ class ColumnManager:
             is_active = self.active_columns.get(column_name, True)
             has_filter = column_name in self.column_filters
             
-            if has_filter:
-                # Yellow for filtered columns
-                button.config(bg="yellow", activebackground="yellow")
-            elif is_active:
-                # Green for active columns
-                button.config(bg="light green", activebackground="light green")
-            else:
+            if not is_active:
                 # Gray for inactive columns
                 button.config(bg="light gray", activebackground="light gray")
+            elif has_filter:
+                # Yellow for active, filtered columns
+                button.config(bg="yellow", activebackground="yellow")
+            else:
+                # Green for active columns
+                button.config(bg="light green", activebackground="light green")
     
     def _clear_column_filter(self, column_name):
         """Clear filter for a specific column"""
@@ -370,8 +372,7 @@ class ColumnManager:
         else:
             # Existing column was overwritten, ensure it's active
             self.active_columns[column_name] = True
-            if column_name in self.column_buttons:
-                self.column_buttons[column_name].config(bg="light green", activebackground="light green")
+            self._update_column_button_color(column_name)
         
         if self.on_columns_updated_callback:
             self.on_columns_updated_callback()

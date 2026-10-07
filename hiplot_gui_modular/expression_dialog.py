@@ -6,6 +6,7 @@ from tkinter import messagebox, ttk
 import pandas as pd
 import numpy as np
 import re
+from utils import grab_when_visible
 
 
 class ExpressionDialog:
@@ -29,9 +30,9 @@ class ExpressionDialog:
         self.dialog.title("Add Column with Expression")
         self.dialog.geometry("800x500")
         self.dialog.transient(self.parent)
-        self.dialog.grab_set()
         
         self._setup_ui()
+        grab_when_visible(self.dialog)
     
     def _setup_ui(self):
         """Setup the user interface for the dialog"""

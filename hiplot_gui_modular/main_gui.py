@@ -33,17 +33,8 @@ try:
         
         hiplot.render.get_index_html_template = _patched_get_index_html_template
         
-        # Patch get_js_bundle to use bundled static files
-        _original_get_js_bundle = hiplot.render.get_js_bundle
-        
-        def _patched_get_js_bundle(src: str) -> str:
-            file = bundled_hiplot_dir / src
-            if not file.exists():
-                return ""
-            with open(str(file), 'r', encoding='utf-8') as f:
-                return f.read()
-        
-        hiplot.render.get_js_bundle = _patched_get_js_bundle
+        # JS/CSS need no patch: html_inlinize() reads them from hiplot/static next to
+        # hiplot/render.py, which PyInstaller places under sys._MEIPASS (see build_exe.py)
         print("HiPlot patched for offline use in PyInstaller bundle")
 except Exception as e:
     print(f"Warning: Could not patch HiPlot for offline use: {e}")
@@ -114,7 +105,10 @@ class HiPlotGUI:
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
         # Mouse wheel scrolling
-        self.canvas.bind_all("<MouseWheel>", lambda event: self.canvas.yview_scroll(int(-1*(event.delta/120)), "units"))
+        self.canvas.bind_all("<MouseWheel>", lambda event: self._on_mouse_wheel(event, -1 if event.delta > 0 else 1))
+        # Linux/X11 sends wheel events as Button-4/5 instead of <MouseWheel>
+        self.canvas.bind_all("<Button-4>", lambda event: self._on_mouse_wheel(event, -1))
+        self.canvas.bind_all("<Button-5>", lambda event: self._on_mouse_wheel(event, 1))
         
         # Content frame
         self.content_frame = tk.Frame(self.canvas)
@@ -123,6 +117,17 @@ class HiPlotGUI:
         # Configure frame bindings
         self.content_frame.bind("<Configure>", self.on_frame_configure)
         self.canvas.bind("<Configure>", self.on_canvas_configure)
+    
+    def _on_mouse_wheel(self, event, direction):
+        """Scroll the main window, ignoring wheel events from popup windows"""
+        try:
+            if event.widget.winfo_toplevel() is not self.root:
+                return
+        except (AttributeError, KeyError, tk.TclError):
+            return
+        if event.delta == 0 and event.num not in (4, 5):
+            return
+        self.canvas.yview_scroll(direction, "units")
     
     def _create_file_section(self):
         """Create the file selection section"""
@@ -278,21 +283,19 @@ class HiPlotGUI:
             if self.column_manager:
                 previous_selection = self.column_manager.get_column_selection_state()
             
-            self.csv_file_path = file_path
-            self.file_label.config(text=f"Selected: {os.path.basename(file_path)}")
-            
-            # Update default HTML filename
-            csv_basename = os.path.splitext(os.path.basename(file_path))[0]
-            self.filename_var.set(f"{csv_basename}_hiplot.html")
-            
             try:
                 # Show loading message
                 self.file_label.config(text=f"Loading {os.path.basename(file_path)}... This may take a moment.")
                 self.root.update()
                 
                 # Load data
-                self.df = pd.read_csv(file_path)
+                self.df = self._read_csv(file_path)
                 columns = self.df.columns.tolist()
+                self.csv_file_path = file_path
+                
+                # Update default HTML filename
+                csv_basename = os.path.splitext(os.path.basename(file_path))[0]
+                self.filename_var.set(f"{csv_basename}_hiplot.html")
                 
                 # Update file label with info
                 self.file_label.config(text=f"Selected: {os.path.basename(file_path)} ({len(self.df)} rows, {len(columns)} columns)")
@@ -310,6 +313,13 @@ class HiPlotGUI:
             except Exception as e:
                 self.file_label.config(text=f"Error: {os.path.basename(file_path)}")
                 messagebox.showerror("Error", f"Could not read CSV file: {str(e)}")
+    
+    def _read_csv(self, file_path):
+        """Read a CSV saved as UTF-8 (with or without BOM) or Windows-1252 (Excel default)"""
+        try:
+            return pd.read_csv(file_path, encoding='utf-8-sig')
+        except UnicodeDecodeError:
+            return pd.read_csv(file_path, encoding='cp1252')
     
     def _initialize_data(self, columns, previous_selection=None):
         """Initialize data and create column manager"""
@@ -396,11 +406,22 @@ class HiPlotGUI:
         optimized_params_window = OptimizedParamsWindow(self.root, self.df, self.df_columns)
         optimized_params_window.show()
     
+    def get_output_directory(self):
+        """Get the output directory from the entry (typed, pasted or browsed)"""
+        dir_path = self.output_dir_var.get().strip().strip('"\'')
+        if not dir_path:
+            return self.output_directory
+        return os.path.abspath(os.path.expanduser(dir_path))
+    
     def browse_output_dir(self):
         """Browse for output directory"""
+        initial_dir = self.get_output_directory()
+        if not os.path.isdir(initial_dir):
+            initial_dir = self.output_directory
+        
         dir_path = filedialog.askdirectory(
             title="Select Directory to Save HTML",
-            initialdir=self.output_directory
+            initialdir=initial_dir
         )
         
         if dir_path:
@@ -414,7 +435,7 @@ class HiPlotGUI:
         if not filename.lower().endswith('.html'):
             filename += '.html'
         
-        return os.path.join(self.output_directory, filename)
+        return os.path.join(self.get_output_directory(), filename)
     
     def generate_html(self):
         """Generate visualization HTML based on selected library"""
@@ -443,9 +464,10 @@ class HiPlotGUI:
                 messagebox.showerror("Error", f"Failed to create output directory: {str(e)}")
                 return
         
+        temp_csv_path = None
         try:
             # Show loading state
-            self.root.config(cursor="wait")
+            self.root.config(cursor="watch")
             self.generate_btn.config(state=tk.DISABLED)
             self.root.update()
             
@@ -458,7 +480,7 @@ class HiPlotGUI:
             
             # Create temporary CSV with active columns
             temp_csv_path = os.path.join(os.path.dirname(output_path), "_temp_hiplot.csv")
-            active_df.to_csv(temp_csv_path, index=False)
+            active_df.to_csv(temp_csv_path, index=False, encoding='utf-8')
             
             # Create HiPlot experiment
             experiment = hip.Experiment.from_csv(temp_csv_path)
@@ -469,24 +491,21 @@ class HiPlotGUI:
             # Save HTML (will use bundled static files via monkey-patch)
             experiment.to_html(output_path)
             
-            # Cleanup
-            self._cleanup_temp_file(temp_csv_path)
-            
-            # Reset UI state
-            self.root.config(cursor="")
-            self.generate_btn.config(state=tk.NORMAL)
-            
             messagebox.showinfo("Success", f"HiPlot visualization saved to:\n{output_path}")
             self.view_btn.config(state=tk.NORMAL)
             
         except Exception as e:
-            self.root.config(cursor="")
-            self.generate_btn.config(state=tk.NORMAL)
-            
             import traceback
             error_details = traceback.format_exc()
             print(f"Error generating HTML: {str(e)}\n{error_details}")
             messagebox.showerror("Error", f"Failed to generate HTML: {str(e)}")
+        
+        finally:
+            # Cleanup and reset UI state
+            if temp_csv_path:
+                self._cleanup_temp_file(temp_csv_path)
+            self.root.config(cursor="")
+            self.generate_btn.config(state=tk.NORMAL)
     
     def _generate_plotly_html(self):
         """Generate Plotly Parallel Coordinates HTML visualization"""
@@ -516,7 +535,7 @@ class HiPlotGUI:
                 return
             
             # Show loading state
-            self.root.config(cursor="wait")
+            self.root.config(cursor="watch")
             self.generate_btn.config(state=tk.DISABLED)
             self.root.update()
             
@@ -547,13 +566,14 @@ class HiPlotGUI:
             
             # Add categorical dimensions (encode them)
             for col in categorical_cols:
-                # Convert categorical to numeric codes
-                active_df[f'{col}_encoded'] = pd.Categorical(active_df[col]).codes
+                # Convert categorical to numeric codes (codes follow categories order)
+                categorical = pd.Categorical(active_df[col].astype(str))
+                active_df[f'{col}_encoded'] = categorical.codes
                 dimensions.append(dict(
                     label=col,
                     values=active_df[f'{col}_encoded'],
-                    tickvals=list(range(len(active_df[col].unique()))),
-                    ticktext=list(active_df[col].unique())
+                    tickvals=list(range(len(categorical.categories))),
+                    ticktext=list(categorical.categories)
                 ))
             
             # Prepare color scale
@@ -580,8 +600,8 @@ class HiPlotGUI:
                         color=color_values,
                         colorscale=colorscale,
                         showscale=True,
-                        cmin=min(color_values) if len(color_values) > 0 else 0,
-                        cmax=max(color_values) if len(color_values) > 0 else 1
+                        cmin=pd.Series(color_values).min() if len(color_values) > 0 else 0,
+                        cmax=pd.Series(color_values).max() if len(color_values) > 0 else 1
                     ),
                     dimensions=dimensions
                 )
@@ -598,21 +618,19 @@ class HiPlotGUI:
             # Save as HTML with embedded Plotly (no CDN - works offline)
             fig.write_html(output_path, include_plotlyjs=True)
             
-            # Reset UI state
-            self.root.config(cursor="")
-            self.generate_btn.config(state=tk.NORMAL)
-            
             messagebox.showinfo("Success", f"Plotly visualization saved to:\n{output_path}")
             self.view_btn.config(state=tk.NORMAL)
             
         except Exception as e:
-            self.root.config(cursor="")
-            self.generate_btn.config(state=tk.NORMAL)
-            
             import traceback
             error_details = traceback.format_exc()
             print(f"Error generating Plotly HTML: {str(e)}\n{error_details}")
             messagebox.showerror("Error", f"Failed to generate Plotly HTML: {str(e)}")
+        
+        finally:
+            # Reset UI state
+            self.root.config(cursor="")
+            self.generate_btn.config(state=tk.NORMAL)
     
     def _configure_experiment(self, experiment, active_df):
         """Configure the HiPlot experiment"""
@@ -647,7 +665,7 @@ class HiPlotGUI:
         output_path = self.get_full_output_path()
         
         if os.path.exists(output_path):
-            webbrowser.open('file://' + os.path.realpath(output_path))
+            webbrowser.open(Path(os.path.realpath(output_path)).as_uri())
         else:
             messagebox.showwarning("Warning", "HTML file not found. Generate it first.")
 

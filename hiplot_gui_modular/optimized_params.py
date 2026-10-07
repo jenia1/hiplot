@@ -6,6 +6,7 @@ from tkinter import messagebox, filedialog, ttk
 import pandas as pd
 import numpy as np
 import os
+from utils import grab_when_visible
 
 
 class ConditionDefinitionDialog:
@@ -34,9 +35,9 @@ class ConditionDefinitionDialog:
         self.window.geometry("500x420")
         self.window.minsize(500, 420)
         self.window.transient(self.parent)
-        self.window.grab_set()
         
         self._setup_ui()
+        grab_when_visible(self.window)
         
         # Bind Enter key to the window
         self.window.bind('<Return>', self._on_enter_key)
@@ -267,7 +268,7 @@ class ConditionDefinitionDialog:
         value = self.value_entry.get().strip()
         
         if not value:
-            messagebox.showwarning("Invalid Value", "Please enter a value for the condition")
+            messagebox.showwarning("Invalid Value", "Please enter a value for the condition", parent=self.window)
             return
         
         # Try to convert to number if possible
@@ -316,6 +317,7 @@ class OptimizedParamsWindow:
         self.df = df
         self.df_columns = df_columns.copy() if df_columns else []
         self.window = None
+        self.results_window = None
         
         # Data storage for each section
         self.all_columns = self.df_columns.copy()  # Section 1: All available columns
@@ -617,7 +619,7 @@ class OptimizedParamsWindow:
             context_menu.add_separator()
         
         context_menu.add_command(
-            label=f"Remove from {section_name.capitalize()} ({len(selected_items)} item(s))",
+            label=f"Remove from {section_name.replace('_', ' ').title()} ({len(selected_items)} item(s))",
             command=lambda: self._remove_from_section(selected_items, section_name)
         )
         
@@ -648,7 +650,8 @@ class OptimizedParamsWindow:
                         messagebox.showinfo(
                             "No Conditions Defined",
                             f"'{item}' was not added to Conditions section because no conditions were defined.\n\n"
-                            "Please add at least one condition to include this column."
+                            "Please add at least one condition to include this column.",
+                            parent=self.window
                         )
                     
                     # Update display
@@ -690,8 +693,8 @@ class OptimizedParamsWindow:
         
         # Remove items
         for item in items:
-            # Extract actual column name
-            column_name = self._extract_column_name(item)
+            # Extract actual column name (only Conditions items carry a suffix)
+            column_name = self._extract_column_name(item) if section_name == 'conditions' else item
             
             if column_name in target_list:
                 target_list.remove(column_name)
@@ -712,7 +715,8 @@ class OptimizedParamsWindow:
         """Clear all items from inputs, conditions, and apply to all sections"""
         response = messagebox.askyesno(
             "Clear All Sections",
-            "Are you sure you want to clear all items from Inputs, Conditions, and Apply to All sections?"
+            "Are you sure you want to clear all items from Inputs, Conditions, and Apply to All sections?",
+            parent=self.window
         )
         
         if response:
@@ -729,7 +733,7 @@ class OptimizedParamsWindow:
             # Clear condition definitions
             self.condition_definitions.clear()
             
-            messagebox.showinfo("Cleared", "All sections have been cleared")
+            messagebox.showinfo("Cleared", "All sections have been cleared", parent=self.window)
     
     def _refresh_conditions_display(self):
         """Refresh the conditions listbox with condition counts"""
@@ -746,9 +750,9 @@ class OptimizedParamsWindow:
     
     def _extract_column_name(self, display_text):
         """Extract the actual column name from display text"""
-        # Remove the condition count suffix if present
-        if " (" in display_text:
-            return display_text.split(" (")[0]
+        # Remove the trailing condition count suffix if present
+        if display_text.endswith(")") and " (" in display_text:
+            return display_text.rsplit(" (", 1)[0]
         return display_text
     
     def _edit_condition(self, column_name):
@@ -769,7 +773,8 @@ class OptimizedParamsWindow:
                 messagebox.showinfo(
                     "Removed from Conditions",
                     f"'{column_name}' was removed from Conditions section because all conditions were cleared.\n\n"
-                    "Add it back with at least one condition to include it."
+                    "Add it back with at least one condition to include it.",
+                    parent=self.window
                 )
             
             # Refresh display
@@ -792,7 +797,8 @@ class OptimizedParamsWindow:
         if not self.inputs:
             messagebox.showwarning(
                 "Missing Configuration",
-                "Please add at least one column to the 'Inputs' section"
+                "Please add at least one column to the 'Inputs' section",
+                parent=self.window
             )
             return
         
@@ -802,7 +808,8 @@ class OptimizedParamsWindow:
                 "Missing Configuration",
                 "Please add columns to either:\n"
                 "- 'Apply to All' section (to find inputs common across groups), or\n"
-                "- 'Conditions' section (to find inputs satisfying conditions)"
+                "- 'Conditions' section (to find inputs satisfying conditions)",
+                parent=self.window
             )
             return
         
@@ -819,7 +826,8 @@ class OptimizedParamsWindow:
                 "\n".join(conditions_without_definitions) +
                 "\n\nPlease either:\n" +
                 "1. Define conditions for these columns, or\n" +
-                "2. Remove them from the Conditions section"
+                "2. Remove them from the Conditions section",
+                parent=self.window
             )
             return
         
@@ -832,7 +840,8 @@ class OptimizedParamsWindow:
                 "Missing Columns",
                 f"The following columns are not found in the loaded data:\n\n" +
                 "\n".join(missing_columns) +
-                "\n\nPlease check your column selections."
+                "\n\nPlease check your column selections.",
+                parent=self.window
             )
             return
         
@@ -849,7 +858,8 @@ class OptimizedParamsWindow:
                 progress_window.destroy()
                 messagebox.showwarning(
                     "No Data",
-                    "No data remains after applying conditions. Please adjust your conditions."
+                    "No data remains after applying conditions. Please adjust your conditions.",
+                    parent=self.window
                 )
                 return
             
@@ -882,7 +892,8 @@ class OptimizedParamsWindow:
             print(f"Error during processing: {str(e)}\n{error_details}")
             messagebox.showerror(
                 "Processing Error",
-                f"An error occurred during processing:\n\n{str(e)}"
+                f"An error occurred during processing:\n\n{str(e)}",
+                parent=self.window
             )
     
     def _show_progress_window(self, message):
@@ -953,7 +964,7 @@ class OptimizedParamsWindow:
             input_combo_col = self.inputs[0]
         else:
             # Create combined input column
-            input_combo_col = '_'.join(self.inputs)
+            input_combo_col = '__input_combo__'
             filtered_df[input_combo_col] = filtered_df[self.inputs].apply(
                 lambda row: tuple(row), axis=1
             )
@@ -1018,14 +1029,14 @@ class OptimizedParamsWindow:
             group_col_name = self.apply_to_all[0]
         else:
             # Create combined group column for multiple "Apply to All" columns
-            group_col_name = '_'.join(self.apply_to_all)
-            self.df[group_col_name] = self.df[self.apply_to_all].apply(
+            # (computed on the side so the loaded data is not modified)
+            group_col_name = '__group__'
+            all_groups = self.df[self.apply_to_all].apply(
                 lambda row: '_'.join(map(str, row)), axis=1
-            )
+            ).unique()
             filtered_df[group_col_name] = filtered_df[self.apply_to_all].apply(
                 lambda row: '_'.join(map(str, row)), axis=1
             )
-            all_groups = self.df[group_col_name].unique()
         
         total_groups = len(all_groups)  # Total groups from original data, not filtered
         
@@ -1035,7 +1046,7 @@ class OptimizedParamsWindow:
             input_combo_col = self.inputs[0]
         else:
             # Create combined input column
-            input_combo_col = '_'.join(self.inputs)
+            input_combo_col = '__input_combo__'
             filtered_df[input_combo_col] = filtered_df[self.inputs].apply(
                 lambda row: tuple(row), axis=1
             )
@@ -1124,12 +1135,14 @@ class OptimizedParamsWindow:
         if self.results_df is None or self.analysis_summary is None:
             messagebox.showwarning(
                 "No Results",
-                "Please click 'Start' to process the data first."
+                "Please click 'Start' to process the data first.",
+                parent=self.window
             )
             return
         
         # Create results window
         results_window = tk.Toplevel(self.window)
+        self.results_window = results_window
         results_window.title("Optimized Parameters Results")
         results_window.geometry("1000x700")
         
@@ -1318,8 +1331,13 @@ class OptimizedParamsWindow:
     
     def _export_results_to_csv(self):
         """Export the optimized parameters to CSV with all original columns from the loaded file"""
+        # Show dialogs over the results window when it is open
+        parent = self.results_window
+        if parent is None or not parent.winfo_exists():
+            parent = self.window
+        
         if self.results_df is None:
-            messagebox.showwarning("No Results", "No results to export")
+            messagebox.showwarning("No Results", "No results to export", parent=parent)
             return
         
         # Filter only optimized rows from results
@@ -1329,7 +1347,8 @@ class OptimizedParamsWindow:
             messagebox.showwarning(
                 "No Optimized Results",
                 "No optimized parameter combinations found to export.\n\n"
-                "Optimized parameters are those that exist across ALL groups."
+                "Optimized parameters are those that exist across ALL groups.",
+                parent=parent
             )
             return
         
@@ -1364,18 +1383,20 @@ class OptimizedParamsWindow:
             title="Export Optimized Parameters",
             defaultextension=".csv",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            initialfile="optimized_parameters.csv"
+            initialfile="optimized_parameters.csv",
+            parent=parent
         )
         
         if not file_path:
             return
         
         try:
-            export_df.to_csv(file_path, index=False)
+            export_df.to_csv(file_path, index=False, encoding='utf-8-sig')
             messagebox.showinfo(
                 "Export Successful",
-                f"Exported {len(export_df)} rows with optimized parameter combinations to:\n{file_path}"
+                f"Exported {len(export_df)} rows with optimized parameter combinations to:\n{file_path}",
+                parent=parent
             )
         except Exception as e:
-            messagebox.showerror("Export Error", f"Failed to export: {str(e)}")
+            messagebox.showerror("Export Error", f"Failed to export: {str(e)}", parent=parent)
 

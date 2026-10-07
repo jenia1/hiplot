@@ -12,7 +12,7 @@ def resource_path(relative_path):
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
 
@@ -55,6 +55,19 @@ class ToolTipHelper:
         # Bind events to widget
         widget.bind("<Enter>", enter)
         widget.bind("<Leave>", leave)
+
+
+def grab_when_visible(window):
+    """Make a dialog modal once it is on screen.
+
+    grab_set() fails with "window not viewable" if called before the window
+    manager has mapped the window (e.g. when opened from a double-click).
+    """
+    try:
+        window.wait_visibility()
+        window.grab_set()
+    except tk.TclError:
+        pass
 
 
 def get_text_width_estimate(text, font_size=8):

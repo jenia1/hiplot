@@ -43,7 +43,7 @@ class DataViewer:
         # Reset pagination
         self.current_page = 0
         column_data = self.df[self.column_name].copy()
-        self.total_pages = math.ceil(len(column_data) / self.rows_per_page)
+        self.total_pages = max(1, math.ceil(len(column_data) / self.rows_per_page))
         
         self._setup_ui()
     
@@ -224,13 +224,14 @@ class DataViewer:
                 self._refresh_data_view()
             else:
                 messagebox.showwarning("Invalid Page", 
-                                    f"Please enter a page number between 1 and {self.total_pages}")
+                                    f"Please enter a page number between 1 and {self.total_pages}", parent=self.window)
         except ValueError:
-            messagebox.showwarning("Invalid Input", "Please enter a valid page number")
+            messagebox.showwarning("Invalid Input", "Please enter a valid page number", parent=self.window)
     
     def _on_view_mode_changed(self):
         """Handle view mode changes"""
         self.current_page = 0
+        self.value_entries = {}
         self._refresh_data_view()
     
     def _refresh_data_view(self):
@@ -240,7 +241,6 @@ class DataViewer:
             widget.destroy()
         
         column_data = self.df[self.column_name].copy()
-        self.value_entries = {}
         
         if self.show_unique_only.get():
             self._show_unique_values(column_data)
@@ -261,7 +261,7 @@ class DataViewer:
         self.all_unique_values = unique_values
         
         # Update pagination
-        self.total_pages = math.ceil(len(unique_values) / self.rows_per_page)
+        self.total_pages = max(1, math.ceil(len(unique_values) / self.rows_per_page))
         self.page_var.set(f"{self.current_page + 1} / {self.total_pages}")
         
         # Get page data
@@ -275,33 +275,33 @@ class DataViewer:
         tk.Label(self.scrollable_frame, text="New Value", font=('bold'), width=20).grid(row=0, column=2, padx=5, pady=5)
         tk.Label(self.scrollable_frame, text="Occurrences", font=('bold'), width=10).grid(row=0, column=3, padx=5, pady=5)
         
+        value_counts = column_data.value_counts(dropna=True)
+        
         # Data rows
         for i, value in enumerate(page_unique_values, 1):
-            occurrences = len(self.df[self.df[self.column_name] == value])
+            occurrences = value_counts.get(value, 0)
             original_value_str = str(value)
             
-            # Determine if this value should be checked based on existing filter
-            is_checked = True
-            if self.existing_filter is not None:
-                # If there's an existing filter, check if this value is excluded
-                is_excluded = any(str(excluded_val) == original_value_str for excluded_val in self.existing_filter)
-                is_checked = not is_excluded
-            
-            # Checkbox for filtering
-            var = tk.BooleanVar(value=is_checked)
+            # Reuse checkbox state from an earlier visit to this page
+            var = self.value_checkboxes.get(original_value_str)
+            if var is None:
+                var = tk.BooleanVar(value=not self._is_excluded_by_existing_filter(original_value_str))
+                self.value_checkboxes[original_value_str] = var
             checkbox = tk.Checkbutton(self.scrollable_frame, variable=var)
             checkbox.grid(row=i, column=0, padx=5, pady=2)
-            self.value_checkboxes[original_value_str] = var
             
             tk.Label(self.scrollable_frame, text=original_value_str, width=20).grid(row=i, column=1, padx=5, pady=2)
             
-            value_var = tk.StringVar(value=original_value_str)
+            entry_key = f"unique:{original_value_str}"
+            value_var = self.value_entries.get(entry_key)
+            if value_var is None:
+                value_var = tk.StringVar(value=original_value_str)
             entry = tk.Entry(self.scrollable_frame, textvariable=value_var, width=20)
             entry.grid(row=i, column=2, padx=5, pady=2)
             
             tk.Label(self.scrollable_frame, text=str(occurrences), width=10).grid(row=i, column=3, padx=5, pady=2)
             
-            self.value_entries[f"unique:{original_value_str}"] = value_var
+            self.value_entries[entry_key] = value_var
         
         # Update filter info if there's an existing filter
         if self.existing_filter and len(self.existing_filter) > 0:
@@ -311,7 +311,7 @@ class DataViewer:
     
     def _show_all_values(self, column_data):
         """Display all values with edit capability"""
-        self.total_pages = math.ceil(len(column_data) / self.rows_per_page)
+        self.total_pages = max(1, math.ceil(len(column_data) / self.rows_per_page))
         self.page_var.set(f"{self.current_page + 1} / {self.total_pages}")
         
         # Get page data
@@ -333,7 +333,9 @@ class DataViewer:
         for i, (idx, value) in enumerate(zip(page_indices, page_data), 1):
             tk.Label(self.scrollable_frame, text=str(idx), width=10).grid(row=i, column=0, padx=5, pady=2)
             
-            value_var = tk.StringVar(value=str(value))
+            value_var = self.value_entries.get(idx)
+            if value_var is None:
+                value_var = tk.StringVar(value=str(value))
             entry = tk.Entry(self.scrollable_frame, textvariable=value_var, width=30)
             entry.grid(row=i, column=1, padx=5, pady=2)
             
@@ -350,10 +352,10 @@ class DataViewer:
             
             if self.show_unique_only.get():
                 # Save data changes
-                self._save_unique_value_changes(original_dtype)
+                value_mapping = self._save_unique_value_changes(original_dtype)
                 
                 # Apply filter based on checkboxes
-                self._apply_filter_from_checkboxes()
+                self._apply_filter_from_checkboxes(value_mapping)
             else:
                 # Save individual changes
                 self._save_individual_changes(original_dtype)
@@ -362,7 +364,7 @@ class DataViewer:
             self.window.destroy()
                 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save changes: {str(e)}")
+            messagebox.showerror("Error", f"Failed to save changes: {str(e)}", parent=self.window)
     
     def _save_unique_value_changes(self, original_dtype):
         """Save changes when in unique values mode"""
@@ -403,6 +405,8 @@ class DataViewer:
         # Apply mapping
         for old_val, new_val in value_mapping.items():
             self.df.loc[self.df[self.column_name] == old_val, self.column_name] = new_val
+        
+        return value_mapping
     
     def _save_individual_changes(self, original_dtype):
         """Save changes when in all values mode"""
@@ -431,17 +435,29 @@ class DataViewer:
                         except ValueError:
                             self.df.at[idx, self.column_name] = new_value
     
-    def _apply_filter_from_checkboxes(self):
+    def _is_excluded_by_existing_filter(self, value_str):
+        """Check whether a value was excluded by the filter this viewer was opened with"""
+        if not self.existing_filter:
+            return False
+        return any(str(excluded_val) == value_str for excluded_val in self.existing_filter)
+    
+    def _apply_filter_from_checkboxes(self, value_mapping=None):
         """Apply filter based on checked/unchecked values (called from Save Changes)"""
-        # Get excluded values from checkboxes
+        value_mapping = value_mapping or {}
+        
+        # Get excluded values; values on pages never shown keep their existing filter state
         excluded_values = []
-        for value_str, checkbox_var in self.value_checkboxes.items():
-            if not checkbox_var.get():
-                # Find the actual value (not string representation)
-                for val in self.all_unique_values:
-                    if str(val) == value_str:
-                        excluded_values.append(val)
-                        break
+        for val in self.all_unique_values:
+            value_str = str(val)
+            checkbox_var = self.value_checkboxes.get(value_str)
+            if checkbox_var is not None:
+                is_excluded = not checkbox_var.get()
+            else:
+                is_excluded = self._is_excluded_by_existing_filter(value_str)
+            
+            if is_excluded:
+                # Follow values renamed in this save so the filter still matches the data
+                excluded_values.append(value_mapping.get(val, val))
         
         # Check if all values are checked (no filter needed)
         if not excluded_values:

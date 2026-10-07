@@ -67,23 +67,23 @@ def build_exe():
     
     # Add hiplot data files (templates and static files)
     if templates_dir and os.path.exists(templates_dir):
-        cmd.append(f'--add-data={templates_dir};hiplot/templates')
+        cmd.append(f'--add-data={templates_dir}{os.pathsep}hiplot/templates')
         print(f"Adding templates: {templates_dir}")
     
     if static_dir and os.path.exists(static_dir):
-        cmd.append(f'--add-data={static_dir};hiplot/static')
+        cmd.append(f'--add-data={static_dir}{os.pathsep}hiplot/static')
         print(f"Adding static files: {static_dir}")
     
     # Add icon file for runtime use (taskbar icon)
     icon_file = os.path.join(current_dir, 'spaghetti.ico')
     if os.path.exists(icon_file):
-        cmd.append(f'--add-data={icon_file};.')
+        cmd.append(f'--add-data={icon_file}{os.pathsep}.')
         print(f"Adding icon for runtime: {icon_file}")
     
     # Add test script for debugging HiPlot offline issues
     test_script = os.path.join(current_dir, 'test_hiplot_offline.py')
     if os.path.exists(test_script):
-        cmd.append(f'--add-data={test_script};.')
+        cmd.append(f'--add-data={test_script}{os.pathsep}.')
         print(f"Adding test script: {test_script}")
     
     # Add icon if available (for exe file icon)
