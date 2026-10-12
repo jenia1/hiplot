@@ -6,7 +6,7 @@ from tkinter import messagebox, filedialog, ttk
 import pandas as pd
 import numpy as np
 import os
-from utils import grab_when_visible
+from utils import grab_when_visible, ToolTipHelper
 
 
 class ConditionDefinitionDialog:
@@ -312,6 +312,9 @@ class ConditionDefinitionDialog:
 class OptimizedParamsWindow:
     """Window for managing optimized parameters with categorization and export"""
     
+    NO_GOAL = "(none)"
+    GOAL_SCORES = ["Worst case", "Average", "Best case"]
+    
     def __init__(self, parent, df, df_columns):
         self.parent = parent
         self.df = df
@@ -327,6 +330,11 @@ class OptimizedParamsWindow:
         
         # Store condition definitions: {column_name: [list of conditions]}
         self.condition_definitions = {}
+        
+        # Goal: optional numeric column to optimize the matching inputs for
+        self.goal_column_var = None
+        self.goal_direction_var = None
+        self.goal_score_var = None
         
         # Store results from processing
         self.results_df = None
@@ -387,6 +395,9 @@ class OptimizedParamsWindow:
         self._create_inputs_section(sections_frame, row=0, col=1)
         self._create_conditions_section(sections_frame, row=1, col=0)
         self._create_apply_to_all_section(sections_frame, row=1, col=1)
+        
+        # Goal row
+        self._create_goal_section(main_frame)
         
         # Buttons
         button_frame = tk.Frame(main_frame)
@@ -557,6 +568,115 @@ class OptimizedParamsWindow:
         # Bind right-click
         self.apply_to_all_listbox.bind("<Button-3>", 
                                        lambda event: self._show_removal_context_menu(event, 'apply_to_all'))
+    
+    def _create_goal_section(self, parent):
+        """Create the 'Goal' row: which column to optimize and how"""
+        frame = tk.LabelFrame(
+            parent,
+            text="5. Goal (optional - rank the matching inputs)",
+            padx=10,
+            pady=8,
+            font=('TkDefaultFont', 10, 'bold')
+        )
+        frame.pack(fill=tk.X, pady=(10, 0))
+        
+        numeric_columns = [col for col in self.df_columns
+                           if col in self.df.columns and pd.api.types.is_numeric_dtype(self.df[col])]
+        
+        tk.Label(frame, text="Optimize:").pack(side=tk.LEFT)
+        self.goal_column_var = tk.StringVar(value=self.NO_GOAL)
+        goal_combo = ttk.Combobox(
+            frame,
+            textvariable=self.goal_column_var,
+            values=[self.NO_GOAL] + numeric_columns,
+            state="readonly",
+            width=20
+        )
+        goal_combo.pack(side=tk.LEFT, padx=(5, 15))
+        
+        self.goal_direction_var = tk.StringVar(value="Maximize")
+        for direction in ("Maximize", "Minimize"):
+            tk.Radiobutton(frame, text=direction, value=direction,
+                           variable=self.goal_direction_var).pack(side=tk.LEFT)
+        
+        tk.Label(frame, text="Score each input by:").pack(side=tk.LEFT, padx=(15, 5))
+        self.goal_score_var = tk.StringVar(value=self.GOAL_SCORES[0])
+        score_combo = ttk.Combobox(
+            frame,
+            textvariable=self.goal_score_var,
+            values=self.GOAL_SCORES,
+            state="readonly",
+            width=12
+        )
+        score_combo.pack(side=tk.LEFT)
+        
+        ToolTipHelper.create_tooltip(
+            score_combo,
+            "An input usually has several rows (one per group or more).\n"
+            "Worst case: the input's weakest row must still be good (robust).\n"
+            "Average: mean over all its rows.\n"
+            "Best case: its single best row."
+        )
+    
+    def _get_goal_settings(self):
+        """Return the goal settings, or None when no goal is selected"""
+        if self.goal_column_var is None:
+            return None
+        column = self.goal_column_var.get()
+        if not column or column == self.NO_GOAL:
+            return None
+        return {
+            'column': column,
+            'direction': self.goal_direction_var.get(),
+            'score': self.goal_score_var.get()
+        }
+    
+    def _add_goal_scores(self, results_df, filtered_df, goal):
+        """Add goal statistics per input combination and rank the results by the goal"""
+        goal_col = goal['column']
+        maximize = goal['direction'] == "Maximize"
+        
+        stats = (filtered_df.groupby(self.inputs, dropna=False)[goal_col]
+                 .agg(['min', 'mean', 'max'])
+                 .rename(columns={'min': f'{goal_col}_min',
+                                  'mean': f'{goal_col}_mean',
+                                  'max': f'{goal_col}_max'})
+                 .reset_index())
+        
+        if goal['score'] == "Average":
+            score_source = f'{goal_col}_mean'
+        elif (goal['score'] == "Worst case") == maximize:
+            score_source = f'{goal_col}_min'
+        else:
+            score_source = f'{goal_col}_max'
+        stats['Goal_Score'] = stats[score_source]
+        
+        results_df = results_df.merge(stats, on=self.inputs, how='left')
+        
+        # Highest coverage first (100% = optimized), then best goal score within each coverage level
+        results_df = results_df.sort_values(
+            ['Coverage_Percent', 'Goal_Score'],
+            ascending=[False, not maximize],
+            na_position='last',
+            kind='stable'
+        ).reset_index(drop=True)
+        
+        # Rank only the optimized inputs that have a score
+        rankable = (results_df['Is_Optimized'] == 'Yes') & results_df['Goal_Score'].notna()
+        results_df['Goal_Rank'] = pd.Series(pd.NA, index=results_df.index, dtype='Int64')
+        results_df.loc[rankable, 'Goal_Rank'] = range(1, rankable.sum() + 1)
+        
+        # Column order: rank, inputs, goal statistics, then the rest
+        goal_columns = ['Goal_Score', f'{goal_col}_min', f'{goal_col}_mean', f'{goal_col}_max']
+        front = ['Goal_Rank'] + self.inputs + goal_columns
+        return results_df[front + [c for c in results_df.columns if c not in front]]
+    
+    def _get_optimal_row(self):
+        """Return the top-ranked results row, or None"""
+        if self.results_df is None or 'Goal_Rank' not in self.results_df.columns:
+            return None
+        ranked = self.results_df[self.results_df['Goal_Rank'] == 1]
+        return None if ranked.empty else ranked.iloc[0]
     
     def _show_all_columns_context_menu(self, event):
         """Show context menu for 'All Columns' section"""
@@ -733,6 +853,10 @@ class OptimizedParamsWindow:
             # Clear condition definitions
             self.condition_definitions.clear()
             
+            # Clear goal
+            if self.goal_column_var is not None:
+                self.goal_column_var.set(self.NO_GOAL)
+            
             messagebox.showinfo("Cleared", "All sections have been cleared", parent=self.window)
     
     def _refresh_conditions_display(self):
@@ -831,8 +955,20 @@ class OptimizedParamsWindow:
             )
             return
         
+        goal = self._get_goal_settings()
+        if goal and goal['column'] in self.inputs:
+            messagebox.showwarning(
+                "Invalid Goal",
+                f"The goal column '{goal['column']}' is also an input.\n\n"
+                "Please choose a goal that is a result of the inputs, or remove it from 'Inputs'.",
+                parent=self.window
+            )
+            return
+        
         # Validate that all columns exist in the dataframe
         all_required_columns = set(self.inputs + self.conditions + self.apply_to_all)
+        if goal:
+            all_required_columns.add(goal['column'])
         missing_columns = [col for col in all_required_columns if col not in self.df.columns]
         
         if missing_columns:
@@ -874,8 +1010,13 @@ class OptimizedParamsWindow:
             
             # Step 3: Store results
             self._update_progress(progress_window, "Step 3/3: Preparing results...")
+            results_df = results['results_df']
+            if goal and not results_df.empty:
+                results_df = self._add_goal_scores(results_df, filtered_df, goal)
+            results['summary']['goal'] = goal
+            
             self.filtered_df = filtered_df
-            self.results_df = results['results_df']
+            self.results_df = results_df
             self.analysis_summary = results['summary']
             
             progress_window.destroy()
@@ -1192,8 +1333,21 @@ class OptimizedParamsWindow:
                 f"Input Combinations Satisfying Conditions: {self.analysis_summary['total_input_combinations']}"
             )
         
+        goal = self.analysis_summary.get('goal')
+        if goal:
+            summary_text = (f"Goal: {goal['direction']} {goal['column']} ({goal['score']})\n"
+                            + summary_text)
+        
         summary_label = tk.Label(summary_frame, text=summary_text, justify='left', font=('TkDefaultFont', 9))
         summary_label.pack(anchor='w')
+        
+        # Optimal result section
+        if goal:
+            self._create_optimal_result_section(main_frame, goal)
+        
+        # Buttons frame (packed before the table so it always stays visible)
+        button_frame = tk.Frame(main_frame)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X)
         
         # Results table section
         table_frame = tk.LabelFrame(main_frame, text="Results Table", padx=10, pady=10)
@@ -1233,28 +1387,16 @@ class OptimizedParamsWindow:
             tree.column(col, width=120, minwidth=80)
             tree.heading(col, text=col)
         
-        # Add data to treeview
-        for idx, row in self.results_df.iterrows():
-            values = [row[col] for col in columns]
-            # Format numeric values
-            formatted_values = []
-            for val in values:
-                if isinstance(val, float):
-                    formatted_values.append(f"{val:.2f}")
-                else:
-                    formatted_values.append(str(val))
-            
-            # Color code based on optimization status
-            tag = 'optimized' if row['Is_Optimized'] == 'Yes' else 'not_optimized'
-            tree.insert('', 'end', text=str(idx + 1), values=formatted_values, tags=(tag,))
-        
         # Configure tags for color coding
+        tree.tag_configure('optimal', background='gold')
         tree.tag_configure('optimized', background='light green')
         tree.tag_configure('not_optimized', background='light yellow')
         
-        # Buttons frame
-        button_frame = tk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
+        # Add data to treeview
+        self._populate_results_tree(tree)
+        
+        # Double-click a row to see its rows and goal per group
+        tree.bind("<Double-Button-1>", lambda event: self._on_results_double_click(tree))
         
         # Export results button
         export_btn = tk.Button(
@@ -1312,18 +1454,144 @@ class OptimizedParamsWindow:
         
         columns = list(df_to_show.columns)
         
-        # Add data
-        for idx, row in df_to_show.iterrows():
-            values = [row[col] for col in columns]
-            formatted_values = []
-            for val in values:
-                if isinstance(val, float):
-                    formatted_values.append(f"{val:.2f}")
-                else:
-                    formatted_values.append(str(val))
+        # Add data (iid = row label in results_df, used by the details window)
+        for position, (idx, row) in enumerate(df_to_show.iterrows(), 1):
+            formatted_values = [self._format_value(row[col]) for col in columns]
             
-            tag = 'optimized' if row['Is_Optimized'] == 'Yes' else 'not_optimized'
-            tree.insert('', 'end', text=str(idx + 1), values=formatted_values, tags=(tag,))
+            if 'Goal_Rank' in row.index and not pd.isna(row['Goal_Rank']) and row['Goal_Rank'] == 1:
+                tag = 'optimal'
+            elif row['Is_Optimized'] == 'Yes':
+                tag = 'optimized'
+            else:
+                tag = 'not_optimized'
+            tree.insert('', 'end', iid=str(idx), text=str(position), values=formatted_values, tags=(tag,))
+    
+    @staticmethod
+    def _format_value(val):
+        """Format a cell for display"""
+        if pd.isna(val):
+            return ""
+        if isinstance(val, float):
+            return f"{val:.2f}" if abs(val) >= 1 else f"{val:.4g}"
+        return str(val)
+    
+    def _format_inputs(self, row):
+        """Format the input values of a results row, e.g. 'X=3, Y=7'"""
+        return ", ".join(f"{col}={self._format_value(row[col])}" for col in self.inputs)
+    
+    def _create_optimal_result_section(self, parent, goal):
+        """Show the best input combination and the goal it achieves"""
+        frame = tk.LabelFrame(parent, text="Optimal Result", padx=10, pady=8,
+                              font=('TkDefaultFont', 10, 'bold'))
+        frame.pack(fill=tk.X, pady=(0, 10))
+        
+        optimal = self._get_optimal_row()
+        if optimal is None:
+            tk.Label(
+                frame,
+                text="No input combination satisfies all conditions in every group, so nothing could be ranked.",
+                fg="red"
+            ).pack(anchor='w')
+            return
+        
+        goal_col = goal['column']
+        tk.Label(
+            frame,
+            text=f"Best inputs:  {self._format_inputs(optimal)}",
+            font=('TkDefaultFont', 11, 'bold'),
+            bg="gold"
+        ).pack(anchor='w')
+        tk.Label(
+            frame,
+            text=(f"{goal['direction']} {goal_col} ({goal['score'].lower()}):  "
+                  f"{self._format_value(optimal['Goal_Score'])}      "
+                  f"[min {self._format_value(optimal[f'{goal_col}_min'])}, "
+                  f"mean {self._format_value(optimal[f'{goal_col}_mean'])}, "
+                  f"max {self._format_value(optimal[f'{goal_col}_max'])}]"),
+            font=('TkDefaultFont', 10)
+        ).pack(anchor='w', pady=(2, 4))
+        
+        tk.Button(
+            frame,
+            text="Show Optimal Details",
+            command=lambda: self._show_combination_details(optimal),
+            bg="gold"
+        ).pack(anchor='w')
+        tk.Label(frame, text="Tip: double-click any row in the table to see its details",
+                 fg="gray").pack(anchor='w')
+    
+    def _on_results_double_click(self, tree):
+        """Open the details window for the double-clicked results row"""
+        selection = tree.selection()
+        if not selection:
+            return
+        row_label = self.results_df.index.dtype.type(selection[0])
+        self._show_combination_details(self.results_df.loc[row_label])
+    
+    def _get_combination_rows(self, row):
+        """Rows of the filtered data that match the input values of a results row"""
+        mask = pd.Series(True, index=self.filtered_df.index)
+        for col in self.inputs:
+            value = row[col]
+            if pd.isna(value):
+                mask &= self.filtered_df[col].isna()
+            else:
+                mask &= self.filtered_df[col] == value
+        original_columns = [col for col in self.df_columns if col in self.filtered_df.columns]
+        return self.filtered_df.loc[mask, original_columns]
+    
+    def _show_combination_details(self, row):
+        """Show one input combination: goal per group and the matching data rows"""
+        goal = self.analysis_summary.get('goal')
+        rows_df = self._get_combination_rows(row)
+        
+        parent = self.results_window if self.results_window and self.results_window.winfo_exists() else self.window
+        window = tk.Toplevel(parent)
+        window.title(f"Details: {self._format_inputs(row)}")
+        window.geometry("900x550")
+        
+        main_frame = tk.Frame(window, padx=15, pady=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        header = f"Inputs:  {self._format_inputs(row)}"
+        if goal and 'Goal_Score' in row.index:
+            rank = row.get('Goal_Rank')
+            rank_text = f"   (rank {rank})" if not pd.isna(rank) else "   (not ranked)"
+            header += (f"\n{goal['direction']} {goal['column']} ({goal['score'].lower()}):  "
+                       f"{self._format_value(row['Goal_Score'])}{rank_text}")
+        tk.Label(main_frame, text=header, justify='left',
+                 font=('TkDefaultFont', 11, 'bold')).pack(anchor='w', pady=(0, 10))
+        tk.Button(main_frame, text="Close", command=window.destroy, width=12).pack(
+            side=tk.BOTTOM, anchor='e', pady=(10, 0))
+        
+        # Matching data rows
+        rows_frame = tk.LabelFrame(main_frame, text=f"Matching rows after conditions ({len(rows_df)})",
+                                   padx=10, pady=10)
+        rows_frame.pack(fill=tk.BOTH, expand=True)
+        self._create_table(rows_frame, rows_df)
+    
+    def _create_table(self, parent, df):
+        """Create a scrollable read-only table showing a DataFrame"""
+        container = tk.Frame(parent)
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        columns = [str(col) for col in df.columns]
+        vsb = ttk.Scrollbar(container, orient="vertical")
+        hsb = ttk.Scrollbar(container, orient="horizontal")
+        tree = ttk.Treeview(container, columns=columns, show='headings',
+                            yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        vsb.config(command=tree.yview)
+        hsb.config(command=tree.xview)
+        vsb.pack(side='right', fill='y')
+        hsb.pack(side='bottom', fill='x')
+        tree.pack(side='left', fill='both', expand=True)
+        
+        for col in columns:
+            tree.column(col, width=90, minwidth=60)
+            tree.heading(col, text=col)
+        for data_row in df.astype(object).itertuples(index=False):
+            tree.insert('', 'end', values=[self._format_value(v) for v in data_row])
+        return tree
     
     def _show_optimized_only(self, tree):
         """Show only optimized parameters in the tree"""
@@ -1377,6 +1645,13 @@ class OptimizedParamsWindow:
         # Keep only the original columns from the loaded file (exclude any temporary columns)
         original_columns = [col for col in self.df_columns if col in export_df.columns]
         export_df = export_df[original_columns]
+        
+        # With a goal, order the rows by goal rank (best inputs first)
+        if 'Goal_Rank' in optimized_results.columns:
+            ranks = optimized_results[self.inputs + ['Goal_Rank']]
+            export_df = export_df.merge(ranks, on=self.inputs, how='left')
+            export_df = export_df.sort_values('Goal_Rank', kind='stable', na_position='last')
+            export_df = export_df[['Goal_Rank'] + original_columns]
         
         # Ask for save location
         file_path = filedialog.asksaveasfilename(
