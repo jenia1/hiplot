@@ -340,6 +340,25 @@ class ColumnManager:
                 active_cols.append(display_name)
         return active_cols
     
+    def get_filtered_df(self):
+        """Get a copy of the full DataFrame with the value filters (unchecked values) applied"""
+        if self.df is None:
+            return None
+        
+        filtered_df = self.df.copy()
+        
+        # Apply filters to exclude specific values
+        for col, excluded_values in self.column_filters.items():
+            if col in filtered_df.columns and len(excluded_values) > 0:
+                # Filter out rows where column value is in excluded_values
+                filtered_df = filtered_df[~filtered_df[col].isin(excluded_values)]
+        
+        return filtered_df
+    
+    def get_filter_summary(self):
+        """Get {column: number of excluded values} for the active value filters"""
+        return {col: len(values) for col, values in self.column_filters.items() if len(values) > 0}
+    
     def get_active_columns_df(self):
         """Get DataFrame with only active columns, renamed, and filtered as needed"""
         if self.df is None:
@@ -350,14 +369,7 @@ class ColumnManager:
         if not active_cols:
             return None
         
-        # Start with full dataframe
-        filtered_df = self.df.copy()
-        
-        # Apply filters to exclude specific values
-        for col, excluded_values in self.column_filters.items():
-            if col in filtered_df.columns and len(excluded_values) > 0:
-                # Filter out rows where column value is in excluded_values
-                filtered_df = filtered_df[~filtered_df[col].isin(excluded_values)]
+        filtered_df = self.get_filtered_df()
         
         # Select only active columns
         active_df = filtered_df[active_cols].copy()

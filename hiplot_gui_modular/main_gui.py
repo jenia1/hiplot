@@ -403,7 +403,11 @@ class HiPlotGUI:
             messagebox.showwarning("Warning", "Please load a CSV file first")
             return
         
-        optimized_params_window = OptimizedParamsWindow(self.root, self.df, self.df_columns)
+        optimized_params_window = OptimizedParamsWindow(
+            self.root, self.df, self.df_columns,
+            get_source_df=self.column_manager.get_filtered_df,
+            get_filter_summary=self.column_manager.get_filter_summary
+        )
         optimized_params_window.show()
     
     def get_output_directory(self):

@@ -315,9 +315,13 @@ class OptimizedParamsWindow:
     NO_GOAL = "(none)"
     GOAL_SCORES = ["Worst case", "Average", "Best case"]
     
-    def __init__(self, parent, df, df_columns):
+    def __init__(self, parent, df, df_columns, get_source_df=None, get_filter_summary=None):
         self.parent = parent
         self.df = df
+        # Main-screen value filters (unchecked values) are applied to the data used at Start
+        self.get_source_df = get_source_df
+        self.get_filter_summary = get_filter_summary
+        self.source_df = df
         self.df_columns = df_columns.copy() if df_columns else []
         self.window = None
         self.results_window = None
@@ -612,10 +616,11 @@ class OptimizedParamsWindow:
         
         ToolTipHelper.create_tooltip(
             score_combo,
-            "An input usually has several rows (one per group or more).\n"
-            "Worst case: the input's weakest row must still be good (robust).\n"
-            "Average: mean over all its rows.\n"
-            "Best case: its single best row."
+            "In each 'Apply to All' group an input counts its best row.\n"
+            "Worst case: its weakest group must still be good (robust).\n"
+            "Average: mean over the groups.\n"
+            "Best case: its single best group.\n"
+            "Without 'Apply to All' the input's best value is used."
         )
     
     def _get_goal_settings(self):
@@ -643,13 +648,18 @@ class OptimizedParamsWindow:
                                   'max': f'{goal_col}_max'})
                  .reset_index())
         
-        if goal['score'] == "Average":
-            score_source = f'{goal_col}_mean'
-        elif (goal['score'] == "Worst case") == maximize:
-            score_source = f'{goal_col}_min'
+        # Within a group an input counts its best row; Worst/Average/Best case compare across groups
+        best = 'max' if maximize else 'min'
+        if self.apply_to_all:
+            per_group = (filtered_df.groupby(self.inputs + self.apply_to_all, dropna=False)[goal_col]
+                         .agg(best).reset_index())
+            across_groups = {"Worst case": 'min' if maximize else 'max',
+                             "Average": 'mean',
+                             "Best case": best}[goal['score']]
+            scores = per_group.groupby(self.inputs, dropna=False)[goal_col].agg(across_groups)
         else:
-            score_source = f'{goal_col}_max'
-        stats['Goal_Score'] = stats[score_source]
+            scores = filtered_df.groupby(self.inputs, dropna=False)[goal_col].agg(best)
+        stats = stats.merge(scores.rename('Goal_Score').reset_index(), on=self.inputs, how='left')
         
         results_df = results_df.merge(stats, on=self.inputs, how='left')
         
@@ -927,12 +937,13 @@ class OptimizedParamsWindow:
             return
         
         # If no "Apply to All" and no conditions, show warning
-        if not self.apply_to_all and not self.conditions:
+        if not self.apply_to_all and not self.conditions and not self._get_goal_settings():
             messagebox.showwarning(
                 "Missing Configuration",
-                "Please add columns to either:\n"
-                "- 'Apply to All' section (to find inputs common across groups), or\n"
-                "- 'Conditions' section (to find inputs satisfying conditions)",
+                "Please add at least one of:\n"
+                "- 'Apply to All' section (to find inputs common across groups),\n"
+                "- 'Conditions' section (to find inputs satisfying conditions), or\n"
+                "- a Goal (to rank the inputs)",
                 parent=self.window
             )
             return
@@ -956,6 +967,9 @@ class OptimizedParamsWindow:
             return
         
         goal = self._get_goal_settings()
+        if goal and not self.apply_to_all:
+            # Without groups there is nothing to be worst/average/best across: rank by the best value
+            goal['score'] = "Best value"
         if goal and goal['column'] in self.inputs:
             messagebox.showwarning(
                 "Invalid Goal",
@@ -986,15 +1000,18 @@ class OptimizedParamsWindow:
             progress_window = self._show_progress_window("Processing data...")
             self.window.update()
             
-            # Step 1: Filter data by conditions
+            # Step 1: Filter data by main-screen value filters and conditions
             self._update_progress(progress_window, "Step 1/3: Filtering data by conditions...")
+            self.source_df = self.get_source_df() if self.get_source_df else self.df
+            filter_summary = self.get_filter_summary() if self.get_filter_summary else {}
             filtered_df = self._apply_conditions_filter()
             
             if filtered_df.empty:
                 progress_window.destroy()
                 messagebox.showwarning(
                     "No Data",
-                    "No data remains after applying conditions. Please adjust your conditions.",
+                    "No data remains after applying the main-screen value filters and conditions.\n"
+                    "Please adjust them.",
                     parent=self.window
                 )
                 return
@@ -1014,6 +1031,7 @@ class OptimizedParamsWindow:
             if goal and not results_df.empty:
                 results_df = self._add_goal_scores(results_df, filtered_df, goal)
             results['summary']['goal'] = goal
+            results['summary']['value_filters'] = filter_summary
             
             self.filtered_df = filtered_df
             self.results_df = results_df
@@ -1058,7 +1076,7 @@ class OptimizedParamsWindow:
     
     def _apply_conditions_filter(self):
         """Apply all condition filters to the dataframe"""
-        filtered_df = self.df.copy()
+        filtered_df = self.source_df.copy()
         
         # Apply each condition
         for column_name in self.conditions:
@@ -1166,13 +1184,13 @@ class OptimizedParamsWindow:
         # IMPORTANT: Get ALL unique groups from ORIGINAL dataframe (before filtering)
         # This ensures we check against all possible groups, not just those that remain after filtering
         if len(self.apply_to_all) == 1:
-            all_groups = self.df[self.apply_to_all[0]].unique()  # Use self.df, not filtered_df
+            all_groups = self.source_df[self.apply_to_all[0]].unique()  # Use source data, not filtered_df
             group_col_name = self.apply_to_all[0]
         else:
             # Create combined group column for multiple "Apply to All" columns
             # (computed on the side so the loaded data is not modified)
             group_col_name = '__group__'
-            all_groups = self.df[self.apply_to_all].apply(
+            all_groups = self.source_df[self.apply_to_all].apply(
                 lambda row: '_'.join(map(str, row)), axis=1
             ).unique()
             filtered_df[group_col_name] = filtered_df[self.apply_to_all].apply(
@@ -1332,6 +1350,11 @@ class OptimizedParamsWindow:
                 f"Filtered Rows: {self.analysis_summary['filtered_rows']}\n"
                 f"Input Combinations Satisfying Conditions: {self.analysis_summary['total_input_combinations']}"
             )
+        
+        value_filters = self.analysis_summary.get('value_filters')
+        if value_filters:
+            summary_text += "\nMain-screen value filters: " + ", ".join(
+                f"{col} ({count} value(s) excluded)" for col, count in value_filters.items())
         
         goal = self.analysis_summary.get('goal')
         if goal:
