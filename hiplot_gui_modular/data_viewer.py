@@ -61,11 +61,11 @@ class DataViewer:
         # Pagination controls
         self._create_pagination_controls(frame)
         
+        # Buttons (packed before the data section so they keep their space at the bottom)
+        self._create_buttons(frame)
+        
         # Data editing section
         self.scrollable_frame = self._create_data_section(frame)
-        
-        # Buttons
-        self._create_buttons(frame)
         
         # Initialize view
         self._refresh_data_view()
@@ -184,7 +184,7 @@ class DataViewer:
     def _create_buttons(self, parent):
         """Create action buttons"""
         button_frame = tk.Frame(parent)
-        button_frame.pack(fill=tk.X, pady=10)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
         
         # Filter info label
         self.filter_info_label = tk.Label(button_frame, text="", fg="blue")
