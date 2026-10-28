@@ -167,6 +167,11 @@ class ColumnManager:
         )
         
         context_menu.add_command(
+            label="Select All Columns",
+            command=self.select_all_columns
+        )
+        
+        context_menu.add_command(
             label="Deselect All Columns",
             command=self.deselect_all_columns
         )
@@ -306,6 +311,15 @@ class ColumnManager:
             )
         else:
             messagebox.showinfo("No Constant Columns", "No constant columns found in the data")
+    
+    def select_all_columns(self):
+        """Select all columns"""
+        for column in self.df_columns:
+            self.active_columns[column] = True
+            self._update_column_button_color(column)
+        
+        if self.on_columns_updated_callback:
+            self.on_columns_updated_callback()
     
     def deselect_all_columns(self):
         """Deselect all columns"""
