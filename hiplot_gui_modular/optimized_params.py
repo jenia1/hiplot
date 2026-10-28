@@ -6,6 +6,7 @@ from tkinter import messagebox, filedialog, ttk
 import pandas as pd
 import numpy as np
 import os
+import re
 from utils import grab_when_visible, ToolTipHelper
 
 
@@ -1495,6 +1496,8 @@ class OptimizedParamsWindow:
         if pd.isna(val):
             return ""
         if isinstance(val, float):
+            if val.is_integer():
+                return str(int(val))
             return f"{val:.2f}" if abs(val) >= 1 else f"{val:.4g}"
         return str(val)
     
@@ -1584,14 +1587,66 @@ class OptimizedParamsWindow:
                        f"{self._format_value(row['Goal_Score'])}{rank_text}")
         tk.Label(main_frame, text=header, justify='left',
                  font=('TkDefaultFont', 11, 'bold')).pack(anchor='w', pady=(0, 10))
-        tk.Button(main_frame, text="Close", command=window.destroy, width=12).pack(
-            side=tk.BOTTOM, anchor='e', pady=(10, 0))
+        
+        # Buttons (packed before the table so they always stay visible)
+        button_frame = tk.Frame(main_frame)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
+        status_label = tk.Label(button_frame, text="", fg="dark green")
+        
+        def copy(text, what):
+            self._copy_to_clipboard(window, text)
+            status_label.config(text=f"{what} copied - paste it into your document")
+        
+        tk.Button(button_frame, text="Export Rows to CSV", width=18, bg="light blue",
+                  command=lambda: self._export_combination_rows(window, row, rows_df)).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Button(button_frame, text="Copy Inputs & Goal", width=18,
+                  command=lambda: copy(self._format_combination_text(row), "Inputs and goal")).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Button(button_frame, text="Copy Table", width=12,
+                  command=lambda: copy(rows_df.to_csv(sep='\t', index=False), "Table")).pack(side=tk.LEFT, padx=(0, 10))
+        status_label.pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Close", command=window.destroy, width=12).pack(side=tk.RIGHT)
         
         # Matching data rows
         rows_frame = tk.LabelFrame(main_frame, text=f"Matching rows after conditions ({len(rows_df)})",
                                    padx=10, pady=10)
         rows_frame.pack(fill=tk.BOTH, expand=True)
         self._create_table(rows_frame, rows_df)
+    
+    def _format_combination_text(self, row):
+        """Plain-text summary of a combination for pasting into a document"""
+        lines = [f"{col} = {self._format_value(row[col])}" for col in self.inputs]
+        goal = self.analysis_summary.get('goal')
+        if goal and 'Goal_Score' in row.index:
+            lines.append(f"{goal['column']} = {self._format_value(row['Goal_Score'])} "
+                         f"({goal['direction'].lower()}, {goal['score'].lower()})")
+        return "\n".join(lines)
+    
+    @staticmethod
+    def _copy_to_clipboard(window, text):
+        """Put text on the system clipboard"""
+        window.clipboard_clear()
+        window.clipboard_append(text)
+        window.update()  # keep the clipboard content after the window closes
+    
+    def _export_combination_rows(self, window, row, rows_df):
+        """Export the data rows of one input combination to CSV"""
+        name = re.sub(r'[^\w.=-]+', '_', "_".join(
+            f"{col}={self._format_value(row[col])}" for col in self.inputs)).strip('_')
+        file_path = filedialog.asksaveasfilename(
+            title="Export Combination Rows",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"combination_{name or 'rows'}.csv",
+            parent=window
+        )
+        if not file_path:
+            return
+        try:
+            rows_df.to_csv(file_path, index=False, encoding='utf-8-sig')
+            messagebox.showinfo("Export Successful",
+                                f"Exported {len(rows_df)} rows to:\n{file_path}", parent=window)
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export: {str(e)}", parent=window)
     
     def _create_table(self, parent, df):
         """Create a scrollable read-only table showing a DataFrame"""
