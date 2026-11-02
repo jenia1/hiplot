@@ -49,6 +49,7 @@ def build_exe():
         '--hidden-import=tkinter.ttk',
         '--hidden-import=pandas',
         '--hidden-import=numpy',
+        '--hidden-import=pandas._libs._cyutility',  # imported from compiled code, missed by analysis
         '--hidden-import=hiplot',
         '--hidden-import=plotly',
         '--hidden-import=plotly.graph_objects',
