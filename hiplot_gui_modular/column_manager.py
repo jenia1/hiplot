@@ -384,6 +384,16 @@ class ColumnManager:
         
         return active_df
     
+    def replace_data(self, df, df_columns):
+        """Switch to a new table (e.g. after appending files) keeping the current
+        selection, renames and value filters; new columns start visible"""
+        self.df = df
+        self.df_columns = df_columns
+        for state in (self.active_columns, self.column_mapping, self.column_filters):
+            for col in [c for c in state if c not in df_columns]:
+                del state[col]
+        self.create_column_grid(self.columns_grid_frame)
+
     def update_columns(self, df, df_columns):
         """Update the columns and DataFrame reference"""
         self.df = df

@@ -62,6 +62,7 @@ def build_exe():
         '--hidden-import=data_viewer',
         '--hidden-import=expression_dialog',
         '--hidden-import=utils',
+        '--hidden-import=file_loader',
         
         # Add data files (add current directory to search path)
         '--paths=.',

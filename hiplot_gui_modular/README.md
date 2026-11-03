@@ -12,6 +12,7 @@ hiplot_gui_modular/
 ├── column_manager.py        # Column selection and management
 ├── data_viewer.py           # Data viewing and editing
 ├── expression_dialog.py     # Column expression dialog
+├── file_loader.py           # Reading CSV/Excel and merging several files
 ├── utils.py                 # Utility functions
 └── README.md               # This file
 ```
@@ -40,6 +41,11 @@ hiplot_gui_modular/
 - Column reference assistance
 - Built-in operation examples
 
+### `file_loader.py`
+- Reads CSV/Excel files (header spaces stripped) and merges several into one table
+- Unique `File Name` values (adds the folder when two files share a name)
+- Checks for mismatched columns and number/text conflicts before merging
+
 ### `utils.py`
 - **ToolTipHelper**: Tooltip creation utilities
 - **resource_path()**: Resource path resolution for PyInstaller
@@ -58,6 +64,10 @@ python app.py
 
 ### Original Features Preserved
 - ✅ CSV and Excel (.xlsx/.xlsm/.xls, with sheet picker) file loading
+- ✅ Load several files at once (or "Add More Files" later): merged into one table with a
+  `File Name` column; columns missing from a file are empty (NaN) for its rows. Warns when more
+  than 30% of a file's columns differ from the first file, or when a column is numbers in one
+  file and text in another
 - ✅ Export the edited data (visible columns, renames, filters, added columns) to CSV
 - ✅ Interactive column selection with visual feedback
 - ✅ Mathematical expression columns

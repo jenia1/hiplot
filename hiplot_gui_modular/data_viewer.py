@@ -79,7 +79,7 @@ class DataViewer:
         unique_count = len(column_data.dropna().unique())
         data_type = column_data.dtype
         
-        if np.issubdtype(data_type, np.number):
+        if pd.api.types.is_numeric_dtype(data_type):
             stats_text = (
                 f"Type: {data_type}\n"
                 f"Min: {column_data.min()}\n"
@@ -379,7 +379,7 @@ class DataViewer:
                 if original_val_str != new_val_str:
                     changes_made += 1
                     
-                    if np.issubdtype(original_dtype, np.number):
+                    if pd.api.types.is_numeric_dtype(original_dtype):
                         try:
                             # Convert back to numbers
                             try:
@@ -425,7 +425,7 @@ class DataViewer:
                         changes_made += 1
                         
                         try:
-                            if np.issubdtype(original_dtype, np.number):
+                            if pd.api.types.is_numeric_dtype(original_dtype):
                                 if pd.isna(new_value) or new_value == '':
                                     self.df.at[idx, self.column_name] = np.nan
                                 else:

@@ -11,9 +11,12 @@ import webbrowser
 import pandas as pd
 import hiplot as hip
 
-from utils import resource_path, configure_window_size, grab_when_visible
-
-EXCEL_EXTENSIONS = ('.xlsx', '.xlsm', '.xls')
+from utils import resource_path, configure_window_size, grab_when_visible, ToolTipHelper
+from file_loader import (
+    FILE_NAME_COLUMN, EXCEL_EXTENSIONS, COLUMN_MISMATCH_THRESHOLD, LoadCancelled,
+    read_data_file, make_display_names, find_column_mismatches,
+    find_type_conflicts, merge_frames
+)
 from column_manager import ColumnManager
 from expression_dialog import ExpressionDialog
 from optimized_params import OptimizedParamsWindow
@@ -55,7 +58,10 @@ class HiPlotGUI:
         self.root.geometry("750x650")
         
         # Initialize data attributes
-        self.csv_file_path = None
+        self.csv_file_path = None  # first loaded file
+        self.source_names = []     # display name of every loaded file ("File Name" values)
+        self.reference_name = None     # first file: others are compared with it
+        self.reference_columns = []
         self.output_directory = os.getcwd()
         self.html_filename = "hiplot_visualization.html"
         self.df_columns = []
@@ -136,8 +142,23 @@ class HiPlotGUI:
         file_frame = tk.LabelFrame(self.content_frame, text="Input File", padx=15, pady=15)
         file_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        self.load_btn = tk.Button(file_frame, text="Load CSV / Excel File", command=self.load_csv, width=20, height=2)
-        self.load_btn.pack(pady=5)
+        load_buttons = tk.Frame(file_frame)
+        load_buttons.pack(pady=5)
+
+        self.load_btn = tk.Button(load_buttons, text="Load CSV / Excel File(s)",
+                                  command=self.load_csv, width=22, height=2)
+        self.load_btn.pack(side=tk.LEFT, padx=5)
+
+        self.add_files_btn = tk.Button(load_buttons, text="Add More Files",
+                                       command=lambda: self.load_csv(append=True),
+                                       width=16, height=2, state=tk.DISABLED)
+        self.add_files_btn.pack(side=tk.LEFT, padx=5)
+        ToolTipHelper.create_tooltip(
+            self.add_files_btn,
+            "Append more files to the loaded data, keeping your edits,\n"
+            "selections, renames and filters. Rows are tagged in the\n"
+            f"'{FILE_NAME_COLUMN}' column."
+        )
         
         self.file_label = tk.Label(file_frame, text="No file selected", wraplength=550)
         self.file_label.pack(pady=5)
@@ -275,10 +296,11 @@ class HiPlotGUI:
             canvas_width = event.width
             self.canvas.itemconfig(self.canvas_frame, width=canvas_width)
     
-    def load_csv(self):
-        """Load a CSV or Excel file and initialize data"""
-        file_path = filedialog.askopenfilename(
-            title="Select CSV or Excel File",
+    def load_csv(self, append=False):
+        """Load one or more CSV/Excel files. Several files are merged into one table
+        with a "File Name" column; append=True adds them to the loaded data."""
+        file_paths = filedialog.askopenfilenames(
+            title="Add CSV or Excel Files" if append else "Select CSV or Excel File(s)",
             filetypes=[
                 ("Data files", "*.csv *.xlsx *.xlsm *.xls"),
                 ("CSV files", "*.csv"),
@@ -286,93 +308,206 @@ class HiPlotGUI:
                 ("All files", "*.*")
             ]
         )
+        file_paths = list(file_paths) if file_paths else []
+        if not file_paths:
+            return
+        if self.df is None:
+            append = False
 
-        if file_path:
-            # Save previous column selection state before loading new file
-            previous_selection = None
-            if self.column_manager:
-                previous_selection = self.column_manager.get_column_selection_state()
+        # Save previous column selection state before loading new files
+        previous_selection = None
+        if self.column_manager and not append:
+            previous_selection = self.column_manager.get_column_selection_state()
 
-            previous_label = self.file_label.cget("text")
-            try:
-                # Show loading message
-                self.file_label.config(text=f"Loading {os.path.basename(file_path)}... This may take a moment.")
-                self.root.update()
+        previous_label = self.file_label.cget("text")
+        try:
+            loaded = self._read_files(file_paths)
+        except LoadCancelled:
+            self.file_label.config(text=previous_label)
+            return
+        except ImportError as e:
+            self.file_label.config(text=previous_label)
+            messagebox.showerror(
+                "Excel Support Missing",
+                f"Reading this Excel file needs an extra library:\n{str(e)}\n\n"
+                "Install it with: pip install openpyxl (for .xlsx/.xlsm) or pip install xlrd (for .xls)"
+            )
+            return
+        except Exception as e:
+            self.file_label.config(text=previous_label)
+            messagebox.showerror("Error", str(e))
+            return
 
-                # Load data (None = user cancelled the sheet choice)
-                df, sheet_name = self._read_data_file(file_path)
-                if df is None:
-                    self.file_label.config(text=previous_label)
-                    return
+        names = make_display_names(file_paths, self.source_names if append else ())
+        new_frames = [(name, df) for name, (df, _sheet) in zip(names, loaded)]
 
-                # Excel headers can be numbers/dates; the rest of the app expects text names
-                df.columns = [str(col) for col in df.columns]
-                self.df = df
-                columns = self.df.columns.tolist()
-                self.csv_file_path = file_path
+        # Checks: columns that differ a lot from the first file, mixed number/text columns
+        if append:
+            reference_name, reference_columns = self.reference_name, self.reference_columns
+            to_compare = new_frames
+            all_frames = [("loaded data", self.df)] + new_frames
+        else:
+            reference_name, reference_columns = new_frames[0][0], new_frames[0][1].columns.tolist()
+            to_compare = new_frames[1:]
+            all_frames = new_frames
 
-                # Update default HTML filename
-                csv_basename = os.path.splitext(os.path.basename(file_path))[0]
-                self.filename_var.set(f"{csv_basename}_hiplot.html")
+        if len(all_frames) > 1:
+            mismatches = find_column_mismatches(
+                reference_name, reference_columns,
+                [(name, df.columns.tolist()) for name, df in to_compare]
+            )
+            conflicts = find_type_conflicts(all_frames)
+            if (mismatches or conflicts) and not self._confirm_load_warnings(mismatches, conflicts):
+                self.file_label.config(text=previous_label)
+                return
 
-                # Update file label with info
-                source_name = os.path.basename(file_path)
-                if sheet_name is not None:
-                    source_name += f" [sheet: {sheet_name}]"
-                self.file_label.config(text=f"Selected: {source_name} ({len(self.df)} rows, {len(columns)} columns)")
-                
-                # Initialize column manager and update UI (pass previous selection)
-                self._initialize_data(columns, previous_selection)
-                
-                # Adjust window size
-                configure_window_size(self.root, len(columns))
-                
-                # Enable add column button and optimized params button
-                self.add_column_btn.config(state=tk.NORMAL)
-                self.optimized_params_btn.config(state=tk.NORMAL)
-                self.export_csv_btn.config(state=tk.NORMAL)
-
-            except ImportError as e:
-                self.file_label.config(text=f"Error: {os.path.basename(file_path)}")
-                messagebox.showerror(
-                    "Excel Support Missing",
-                    f"Reading this Excel file needs an extra library:\n{str(e)}\n\n"
-                    "Install it with: pip install openpyxl (for .xlsx/.xlsm) or pip install xlrd (for .xls)"
-                )
-            except Exception as e:
-                self.file_label.config(text=f"Error: {os.path.basename(file_path)}")
-                messagebox.showerror("Error", f"Could not read file: {str(e)}")
-
-    def _read_data_file(self, file_path):
-        """Read a CSV or Excel file. Returns (DataFrame, sheet name or None); DataFrame is None if cancelled"""
-        if file_path.lower().endswith(EXCEL_EXTENSIONS):
-            return self._read_excel(file_path)
-        return self._read_csv(file_path), None
-
-    def _read_excel(self, file_path):
-        """Read one sheet of an Excel workbook, asking which one when there are several"""
-        with pd.ExcelFile(file_path) as workbook:
-            sheet_names = workbook.sheet_names
-            if not sheet_names:
-                raise ValueError("The workbook has no sheets")
-
-            if len(sheet_names) == 1:
-                sheet_name = sheet_names[0]
+        try:
+            # Merge (a single fresh file is used as is, without a "File Name" column)
+            if append:
+                merged = merge_frames([(self.source_names[0], self.df)] + new_frames)
+            elif len(new_frames) == 1:
+                merged = new_frames[0][1]
             else:
-                sheet_name = self._ask_sheet_name(os.path.basename(file_path), sheet_names)
-                if sheet_name is None:
-                    return None, None
+                merged = merge_frames(new_frames)
+        except Exception as e:
+            self.file_label.config(text=previous_label)
+            messagebox.showerror("Error", f"Could not merge the files: {str(e)}")
+            return
 
-            df = workbook.parse(sheet_name)
+        had_file_name_column = append and FILE_NAME_COLUMN in self.df.columns
 
-        # Drop fully empty rows/columns that Excel often leaves around the data
-        df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
-        if df.empty:
-            raise ValueError(f"Sheet '{sheet_name}' has no data")
-        return df, sheet_name
+        if append:
+            self.source_names = self.source_names + names
+        else:
+            self.source_names = names
+            self.csv_file_path = file_paths[0]
+            self.reference_name, self.reference_columns = reference_name, reference_columns
 
-    def _ask_sheet_name(self, file_name, sheet_names):
-        """Let the user pick a sheet from a workbook; returns None if cancelled"""
+        self.df = merged
+        columns = self.df.columns.tolist()
+        self.filename_var.set(f"{self._data_base_name()}_hiplot.html")
+        self._update_file_label(loaded, names, append)
+
+        if append:
+            # Keep selections, renames and filters; new columns start visible
+            self.df_columns = columns
+            self.column_manager.replace_data(self.df, self.df_columns)
+            self.update_dropdown_lists()
+            if not had_file_name_column and FILE_NAME_COLUMN in columns:
+                self.color_by_var.set(FILE_NAME_COLUMN)
+            self.root.update_idletasks()
+            self.on_frame_configure()
+        else:
+            self._initialize_data(columns, previous_selection)
+
+        configure_window_size(self.root, len(columns))
+
+        for button in (self.add_column_btn, self.optimized_params_btn,
+                       self.export_csv_btn, self.add_files_btn):
+            button.config(state=tk.NORMAL)
+
+    def _read_files(self, file_paths):
+        """Read every file; returns [(DataFrame, sheet name or None)].
+        Raises LoadCancelled if the user cancels a sheet choice."""
+        excel_count = sum(1 for p in file_paths if p.lower().endswith(EXCEL_EXTENSIONS))
+        remembered = {'sheet': None}
+
+        def choose_sheet(file_path, sheet_names):
+            # "Use this sheet for the other workbooks too" - when they have it
+            if remembered['sheet'] in sheet_names:
+                return remembered['sheet']
+            sheet, use_for_all = self._ask_sheet_name(
+                os.path.basename(file_path), sheet_names, offer_use_for_all=excel_count > 1)
+            if use_for_all:
+                remembered['sheet'] = sheet
+            return sheet
+
+        loaded = []
+        for i, file_path in enumerate(file_paths, 1):
+            file_name = os.path.basename(file_path)
+            progress = f" ({i}/{len(file_paths)})" if len(file_paths) > 1 else ""
+            self.file_label.config(text=f"Loading {file_name}{progress}... This may take a moment.")
+            self.root.update()
+            try:
+                loaded.append(read_data_file(file_path, choose_sheet))
+            except (LoadCancelled, ImportError):
+                raise
+            except Exception as e:
+                raise RuntimeError(f"Could not read '{file_name}':\n{str(e)}") from e
+        return loaded
+
+    def _confirm_load_warnings(self, mismatches, conflicts):
+        """Show what looks wrong with the files; True = load anyway"""
+        def short_list(items, limit=8):
+            text = ", ".join(str(item) for item in items[:limit])
+            return text + (f" ... (+{len(items) - limit} more)" if len(items) > limit else "")
+
+        sections = []
+        if mismatches:
+            lines = [f"More than {COLUMN_MISMATCH_THRESHOLD:.0%} of the columns differ from "
+                     f"'{mismatches[0]['reference']}' - this may be the wrong file:"]
+            for m in mismatches[:5]:
+                lines.append(f"\n• {m['file']}: {m['share']:.0%} different")
+                if m['missing']:
+                    lines.append(f"    missing: {short_list(m['missing'])}")
+                if m['extra']:
+                    lines.append(f"    extra: {short_list(m['extra'])}")
+            if len(mismatches) > 5:
+                lines.append(f"\n... and {len(mismatches) - 5} more file(s)")
+            sections.append("\n".join(lines))
+
+        if conflicts:
+            lines = ["These columns hold numbers in some files and text in others. "
+                     "After merging they become text (shown as categories):"]
+            for c in conflicts[:6]:
+                samples = f" (text values: {', '.join(repr(s) for s in c['samples'])})" if c['samples'] else ""
+                lines.append(f"• {c['column']}: text in {short_list(c['text_files'], 3)}{samples}")
+            if len(conflicts) > 6:
+                lines.append(f"... and {len(conflicts) - 6} more column(s)")
+            sections.append("\n".join(lines))
+
+        return messagebox.askyesno(
+            "Check Files Before Merging",
+            "\n\n".join(sections) + "\n\nLoad anyway?",
+            icon='warning',
+            default=messagebox.NO
+        )
+
+    def _update_file_label(self, loaded, names, append):
+        """Describe the loaded data under the load buttons"""
+        rows, cols = len(self.df), len(self.df.columns)
+        if len(self.source_names) == 1:
+            _df, sheet_name = loaded[0]
+            source = self.source_names[0] + (f" [sheet: {sheet_name}]" if sheet_name is not None else "")
+            self.file_label.config(text=f"Selected: {source} ({rows} rows, {cols} columns)")
+            return
+
+        counts = self.df[FILE_NAME_COLUMN].value_counts()
+        shown = [f"{name} ({counts.get(name, 0)})" for name in self.source_names[:6]]
+        if len(self.source_names) > 6:
+            shown.append(f"... +{len(self.source_names) - 6} more")
+        action = f"Added {len(names)} file(s)" if append else f"Merged {len(self.source_names)} files"
+        self.file_label.config(
+            text=f"{action} - {len(self.source_names)} files, {rows} rows, {cols} columns "
+                 f"(incl. '{FILE_NAME_COLUMN}'):\n" + ", ".join(shown)
+        )
+
+    def _data_base_name(self):
+        """Base name for output files: first file's name, plus _merged for several files"""
+        if not self.csv_file_path:
+            return "data"
+        base = os.path.splitext(os.path.basename(self.csv_file_path))[0]
+        return f"{base}_merged" if len(self.source_names) > 1 else base
+
+    def _plot_source_title(self):
+        """File name(s) shown in the Plotly title"""
+        if len(self.source_names) > 1:
+            return f"{len(self.source_names)} merged files"
+        return os.path.basename(self.csv_file_path)
+    
+    def _ask_sheet_name(self, file_name, sheet_names, offer_use_for_all=False):
+        """Let the user pick a sheet from a workbook.
+        Returns (sheet name or None if cancelled, use the same sheet for the other workbooks)"""
         dialog = tk.Toplevel(self.root)
         dialog.title("Select Sheet")
         dialog.transient(self.root)
@@ -391,6 +526,11 @@ class HiPlotGUI:
         combo.pack(fill=tk.X, pady=(0, 10))
         combo.focus_set()
 
+        use_for_all_var = tk.BooleanVar(value=True)
+        if offer_use_for_all:
+            tk.Checkbutton(frame, text="Use this sheet for the other workbooks too\n(asks again if one doesn't have it)",
+                           variable=use_for_all_var, justify='left').pack(anchor='w', pady=(0, 10))
+
         def on_ok(event=None):
             result['sheet'] = sheet_var.get()
             dialog.destroy()
@@ -405,14 +545,7 @@ class HiPlotGUI:
 
         grab_when_visible(dialog)
         self.root.wait_window(dialog)
-        return result['sheet']
-
-    def _read_csv(self, file_path):
-        """Read a CSV saved as UTF-8 (with or without BOM) or Windows-1252 (Excel default)"""
-        try:
-            return pd.read_csv(file_path, encoding='utf-8-sig')
-        except UnicodeDecodeError:
-            return pd.read_csv(file_path, encoding='cp1252')
+        return result['sheet'], offer_use_for_all and use_for_all_var.get()
     
     def _initialize_data(self, columns, previous_selection=None):
         """Initialize data and create column manager"""
@@ -440,6 +573,14 @@ class HiPlotGUI:
         
         try:
             numeric_cols = self.df.select_dtypes(include=['number']).columns.tolist()
+            
+            # Several files: coloring by file is usually the first thing to look at
+            if FILE_NAME_COLUMN in columns and len(self.source_names) > 1:
+                self.color_by_var.set(FILE_NAME_COLUMN)
+                if numeric_cols:
+                    self.x_axis_var.set(numeric_cols[0])
+                    self.y_axis_var.set(numeric_cols[-1])
+                return
             
             if numeric_cols:
                 self.color_by_var.set(numeric_cols[-1])
@@ -706,7 +847,7 @@ class HiPlotGUI:
             
             # Update layout
             fig.update_layout(
-                title=f"Parallel Coordinates Plot - {os.path.basename(self.csv_file_path)}",
+                title=f"Parallel Coordinates Plot - {self._plot_source_title()}",
                 font=dict(size=12),
                 height=700,
                 margin=dict(l=100, r=100, t=100, b=50)
@@ -772,7 +913,7 @@ class HiPlotGUI:
         initial_dir = self.get_output_directory()
         if not os.path.isdir(initial_dir):
             initial_dir = self.output_directory
-        base_name = os.path.splitext(os.path.basename(self.csv_file_path))[0]
+        base_name = self._data_base_name()
 
         file_path = filedialog.asksaveasfilename(
             title="Export Data to CSV",
