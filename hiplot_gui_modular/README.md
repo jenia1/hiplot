@@ -68,6 +68,9 @@ python app.py
   `File Name` column; columns missing from a file are empty (NaN) for its rows. Warns when more
   than 30% of a file's columns differ from the first file, or when a column is numbers in one
   file and text in another
+- ✅ Type-to-search: on the main screen just start typing (outside text fields) and matching
+  column names turn blue bold (Backspace deletes, Esc clears). In lists and dropdowns
+  (Optimized Parameters, expression window, Color by / X / Y) typing jumps to the first match
 - ✅ Export the edited data (visible columns, renames, filters, added columns) to CSV
 - ✅ Interactive column selection with visual feedback
 - ✅ Mathematical expression columns

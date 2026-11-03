@@ -11,7 +11,8 @@ import webbrowser
 import pandas as pd
 import hiplot as hip
 
-from utils import resource_path, configure_window_size, grab_when_visible, ToolTipHelper
+from utils import (resource_path, configure_window_size, grab_when_visible, ToolTipHelper,
+                   add_type_ahead, is_text_input, is_search_key)
 from file_loader import (
     FILE_NAME_COLUMN, EXCEL_EXTENSIONS, COLUMN_MISMATCH_THRESHOLD, LoadCancelled,
     read_data_file, make_display_names, find_column_mismatches,
@@ -69,6 +70,7 @@ class HiPlotGUI:
         
         # Initialize components
         self.column_manager = None
+        self.column_search = ""  # typed on the main screen (no search box)
         
         # Setup UI
         self.setup_ui()
@@ -98,6 +100,8 @@ class HiPlotGUI:
         self._create_output_section()
         self._create_config_section()
         self._create_buttons_section()
+        
+        self._bind_column_search()
     
     def _create_scrollable_frame(self):
         """Create the scrollable main frame structure"""
@@ -167,13 +171,66 @@ class HiPlotGUI:
         """Create the column selection section"""
         self.columns_frame = tk.LabelFrame(
             self.content_frame,
-            text="Column Selection (green = visible, gray = hidden, right-click for options)",
+            text=self.COLUMNS_TITLE,
             padx=15, pady=15
         )
         self.columns_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         self.columns_grid_frame = tk.Frame(self.columns_frame)
         self.columns_grid_frame.pack(fill=tk.BOTH, expand=True)
+    
+    COLUMNS_TITLE = "Column Selection (green = visible, gray = hidden, right-click for options)"
+    
+    def _bind_column_search(self):
+        """Typing anywhere on the main screen (outside text fields) searches column names"""
+        self.root.bind("<Key>", self._on_main_key, add="+")
+    
+    def _on_main_key(self, event):
+        if self.column_manager is None or is_text_input(event.widget):
+            return
+        if event.keysym == "Escape":
+            if not self.column_search:
+                return
+            query = ""
+        elif event.keysym == "BackSpace":
+            if not self.column_search:
+                return
+            query = self.column_search[:-1]
+        elif is_search_key(event):
+            query = self.column_search + event.char
+        else:
+            return
+        self._set_column_search(query)
+        return "break"
+    
+    def _set_column_search(self, query, scroll=True):
+        """Highlight matching columns and show the typed text in the section title"""
+        self.column_search = query
+        matches = self.column_manager.set_search(query) if self.column_manager else []
+        if query:
+            count = f"{len(matches)} match" + ("" if len(matches) == 1 else "es")
+            self.columns_frame.config(
+                text=f"Search: {query}  -  {count}  (Backspace deletes, Esc clears)",
+                fg="blue")
+            if matches and scroll:
+                self._scroll_into_view(self.column_manager.column_buttons.get(matches[0]))
+        else:
+            self.columns_frame.config(text=self.COLUMNS_TITLE, fg="black")
+    
+    def _scroll_into_view(self, widget):
+        """Scroll the main window so widget is visible (only if it is not)"""
+        if widget is None:
+            return
+        self.root.update_idletasks()
+        content_height = self.content_frame.winfo_height()
+        if content_height <= 0:
+            return
+        top = widget.winfo_rooty() - self.content_frame.winfo_rooty()
+        bottom = top + widget.winfo_height()
+        view_top = self.canvas.canvasy(0)
+        view_bottom = view_top + self.canvas.winfo_height()
+        if top < view_top or bottom > view_bottom:
+            self.canvas.yview_moveto(max(0, top - 40) / content_height)
     
     def _create_add_column_section(self):
         """Create the add column section"""
@@ -271,6 +328,9 @@ class HiPlotGUI:
         self.y_axis_var = tk.StringVar()
         self.y_axis_dropdown = ttk.Combobox(config_frame, textvariable=self.y_axis_var, width=30, state="readonly")
         self.y_axis_dropdown.grid(row=3, column=1, sticky="w", pady=5)
+        
+        # Type a name in a dropdown to jump to the first match
+        add_type_ahead(self.color_by_dropdown, self.x_axis_dropdown, self.y_axis_dropdown)
     
     def _create_buttons_section(self):
         """Create the action buttons section"""
@@ -525,6 +585,7 @@ class HiPlotGUI:
         combo = ttk.Combobox(frame, textvariable=sheet_var, values=sheet_names, state="readonly", width=35)
         combo.pack(fill=tk.X, pady=(0, 10))
         combo.focus_set()
+        add_type_ahead(combo)
 
         use_for_all_var = tk.BooleanVar(value=True)
         if offer_use_for_all:
@@ -550,6 +611,8 @@ class HiPlotGUI:
     def _initialize_data(self, columns, previous_selection=None):
         """Initialize data and create column manager"""
         self.df_columns = columns
+        self.column_manager = None
+        self._set_column_search("")
         
         # Create column manager
         self.column_manager = ColumnManager(self.root, self.df, self.df_columns)
@@ -606,6 +669,10 @@ class HiPlotGUI:
             return
         
         active_cols = self.column_manager.get_active_columns_with_display_names()
+        
+        # Renames / added columns can change the search matches
+        if self.column_search:
+            self._set_column_search(self.column_search, scroll=False)
         
         for dropdown in [self.color_by_dropdown, self.x_axis_dropdown, self.y_axis_dropdown]:
             current_value = dropdown.get()

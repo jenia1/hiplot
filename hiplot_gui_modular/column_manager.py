@@ -20,6 +20,7 @@ class ColumnManager:
         self.column_mapping = {}
         self.column_filters = {}  # Store filters per column {column_name: [excluded_values]}
         self.columns_grid_frame = None
+        self.search_query = ""  # main-screen type-to-search; matches are blue bold
         
         # Callbacks
         self.on_columns_updated_callback = None
@@ -62,6 +63,7 @@ class ColumnManager:
         # Sync button colors with selection and filter state
         for column in self.df_columns:
             self._update_column_button_color(column)
+            self._update_search_style(column)
         
         # Configure grid weights
         self._configure_grid_weights(cols_per_row)
@@ -222,6 +224,7 @@ class ColumnManager:
             
             button.config(text=new_name)
             self.column_mapping[original_column] = new_name
+            self._update_search_style(original_column)
             
             if self.on_columns_updated_callback:
                 self.on_columns_updated_callback()
@@ -251,6 +254,33 @@ class ColumnManager:
         # Pass existing filter to viewer so it can restore checkbox states
         viewer = DataViewer(self.parent, self.df, column_name, on_filter_changed, existing_filter)
         viewer.show()
+    
+    def set_search(self, query):
+        """Highlight columns whose shown name contains query (case ignored).
+        Returns the matching columns in grid order."""
+        self.search_query = query
+        for column in self.df_columns:
+            self._update_search_style(column)
+        return self.get_search_matches()
+    
+    def get_search_matches(self):
+        if not self.search_query:
+            return []
+        query = self.search_query.lower()
+        return [col for col in self.df_columns
+                if query in str(self.column_mapping.get(col, col)).lower()]
+    
+    def _update_search_style(self, column_name):
+        """Blue bold text for search matches; the background keeps its state color"""
+        button = self.column_buttons.get(column_name)
+        if button is None:
+            return
+        name = str(self.column_mapping.get(column_name, column_name))
+        size = self._get_font_size(name)
+        if self.search_query and self.search_query.lower() in name.lower():
+            button.config(font=('TkDefaultFont', size, 'bold'), fg="blue", activeforeground="blue")
+        else:
+            button.config(font=('TkDefaultFont', size), fg="black", activeforeground="black")
     
     def _update_column_button_color(self, column_name):
         """Update button color based on filter state"""

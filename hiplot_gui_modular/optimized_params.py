@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import os
 import re
-from utils import grab_when_visible, ToolTipHelper
+from utils import grab_when_visible, ToolTipHelper, add_type_ahead
 
 
 class ConditionDefinitionDialog:
@@ -404,6 +404,11 @@ class OptimizedParamsWindow:
         # Goal row
         self._create_goal_section(main_frame)
         
+        # Type a name in any list/dropdown to jump to the first match
+        add_type_ahead(self.all_columns_listbox, self.inputs_listbox,
+                       self.conditions_listbox, self.apply_to_all_listbox,
+                       self.goal_combo, self.score_combo)
+        
         # Buttons
         button_frame = tk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(15, 0))
@@ -590,7 +595,7 @@ class OptimizedParamsWindow:
         
         tk.Label(frame, text="Optimize:").pack(side=tk.LEFT)
         self.goal_column_var = tk.StringVar(value=self.NO_GOAL)
-        goal_combo = ttk.Combobox(
+        goal_combo = self.goal_combo = ttk.Combobox(
             frame,
             textvariable=self.goal_column_var,
             values=[self.NO_GOAL] + numeric_columns,
@@ -606,7 +611,7 @@ class OptimizedParamsWindow:
         
         tk.Label(frame, text="Score each input by:").pack(side=tk.LEFT, padx=(15, 5))
         self.goal_score_var = tk.StringVar(value=self.GOAL_SCORES[0])
-        score_combo = ttk.Combobox(
+        score_combo = self.score_combo = ttk.Combobox(
             frame,
             textvariable=self.goal_score_var,
             values=self.GOAL_SCORES,

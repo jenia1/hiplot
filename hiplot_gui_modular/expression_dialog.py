@@ -6,7 +6,7 @@ from tkinter import messagebox, ttk
 import pandas as pd
 import numpy as np
 import re
-from utils import grab_when_visible
+from utils import grab_when_visible, add_type_ahead
 
 
 class ExpressionDialog:
@@ -89,6 +89,9 @@ class ExpressionDialog:
         # Populate columns
         for col in self.df_columns:
             self.columns_listbox.insert(tk.END, col)
+        
+        # Type a name to jump to it (click the list first)
+        add_type_ahead(self.columns_listbox)
         
         # Bind double-click to copy column
         self.columns_listbox.bind("<Double-1>", lambda e: self._copy_column_to_expression())
