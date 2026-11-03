@@ -54,6 +54,7 @@ def build_exe():
         '--hidden-import=plotly',
         '--hidden-import=plotly.graph_objects',
         '--hidden-import=plotly.express',
+        '--hidden-import=openpyxl',  # Excel (.xlsx) loading - pandas imports it lazily
         
         # Add our modules
         '--hidden-import=main_gui',

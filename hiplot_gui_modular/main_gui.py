@@ -11,7 +11,9 @@ import webbrowser
 import pandas as pd
 import hiplot as hip
 
-from utils import resource_path, configure_window_size
+from utils import resource_path, configure_window_size, grab_when_visible
+
+EXCEL_EXTENSIONS = ('.xlsx', '.xlsm', '.xls')
 from column_manager import ColumnManager
 from expression_dialog import ExpressionDialog
 from optimized_params import OptimizedParamsWindow
@@ -134,7 +136,7 @@ class HiPlotGUI:
         file_frame = tk.LabelFrame(self.content_frame, text="Input File", padx=15, pady=15)
         file_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        self.load_btn = tk.Button(file_frame, text="Load CSV File", command=self.load_csv, width=20, height=2)
+        self.load_btn = tk.Button(file_frame, text="Load CSV / Excel File", command=self.load_csv, width=20, height=2)
         self.load_btn.pack(pady=5)
         
         self.file_label = tk.Label(file_frame, text="No file selected", wraplength=550)
@@ -259,6 +261,9 @@ class HiPlotGUI:
         
         self.view_btn = tk.Button(button_frame, text="View in Browser", command=self.view_html, width=15, height=2, state=tk.DISABLED)
         self.view_btn.pack(side=tk.LEFT, padx=10)
+
+        self.export_csv_btn = tk.Button(button_frame, text="Export to CSV", command=self.export_csv, width=15, height=2, state=tk.DISABLED)
+        self.export_csv_btn.pack(side=tk.LEFT, padx=10)
     
     def on_frame_configure(self, event=None):
         """Handle frame configuration changes"""
@@ -271,34 +276,50 @@ class HiPlotGUI:
             self.canvas.itemconfig(self.canvas_frame, width=canvas_width)
     
     def load_csv(self):
-        """Load CSV file and initialize data"""
+        """Load a CSV or Excel file and initialize data"""
         file_path = filedialog.askopenfilename(
-            title="Select CSV File",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            title="Select CSV or Excel File",
+            filetypes=[
+                ("Data files", "*.csv *.xlsx *.xlsm *.xls"),
+                ("CSV files", "*.csv"),
+                ("Excel files", "*.xlsx *.xlsm *.xls"),
+                ("All files", "*.*")
+            ]
         )
-        
+
         if file_path:
             # Save previous column selection state before loading new file
             previous_selection = None
             if self.column_manager:
                 previous_selection = self.column_manager.get_column_selection_state()
-            
+
+            previous_label = self.file_label.cget("text")
             try:
                 # Show loading message
                 self.file_label.config(text=f"Loading {os.path.basename(file_path)}... This may take a moment.")
                 self.root.update()
-                
-                # Load data
-                self.df = self._read_csv(file_path)
+
+                # Load data (None = user cancelled the sheet choice)
+                df, sheet_name = self._read_data_file(file_path)
+                if df is None:
+                    self.file_label.config(text=previous_label)
+                    return
+
+                # Excel headers can be numbers/dates; the rest of the app expects text names
+                df.columns = [str(col) for col in df.columns]
+                self.df = df
                 columns = self.df.columns.tolist()
                 self.csv_file_path = file_path
-                
+
                 # Update default HTML filename
                 csv_basename = os.path.splitext(os.path.basename(file_path))[0]
                 self.filename_var.set(f"{csv_basename}_hiplot.html")
-                
+
                 # Update file label with info
-                self.file_label.config(text=f"Selected: {os.path.basename(file_path)} ({len(self.df)} rows, {len(columns)} columns)")
+                source_name = os.path.basename(file_path)
+                if sheet_name is not None:
+                    source_name += f" [sheet: {sheet_name}]"
+                self.file_label.config(text=f"Selected: {source_name} ({len(self.df)} rows, {len(columns)} columns)")
                 
                 # Initialize column manager and update UI (pass previous selection)
                 self._initialize_data(columns, previous_selection)
@@ -309,11 +330,83 @@ class HiPlotGUI:
                 # Enable add column button and optimized params button
                 self.add_column_btn.config(state=tk.NORMAL)
                 self.optimized_params_btn.config(state=tk.NORMAL)
-                
+                self.export_csv_btn.config(state=tk.NORMAL)
+
+            except ImportError as e:
+                self.file_label.config(text=f"Error: {os.path.basename(file_path)}")
+                messagebox.showerror(
+                    "Excel Support Missing",
+                    f"Reading this Excel file needs an extra library:\n{str(e)}\n\n"
+                    "Install it with: pip install openpyxl (for .xlsx/.xlsm) or pip install xlrd (for .xls)"
+                )
             except Exception as e:
                 self.file_label.config(text=f"Error: {os.path.basename(file_path)}")
-                messagebox.showerror("Error", f"Could not read CSV file: {str(e)}")
-    
+                messagebox.showerror("Error", f"Could not read file: {str(e)}")
+
+    def _read_data_file(self, file_path):
+        """Read a CSV or Excel file. Returns (DataFrame, sheet name or None); DataFrame is None if cancelled"""
+        if file_path.lower().endswith(EXCEL_EXTENSIONS):
+            return self._read_excel(file_path)
+        return self._read_csv(file_path), None
+
+    def _read_excel(self, file_path):
+        """Read one sheet of an Excel workbook, asking which one when there are several"""
+        with pd.ExcelFile(file_path) as workbook:
+            sheet_names = workbook.sheet_names
+            if not sheet_names:
+                raise ValueError("The workbook has no sheets")
+
+            if len(sheet_names) == 1:
+                sheet_name = sheet_names[0]
+            else:
+                sheet_name = self._ask_sheet_name(os.path.basename(file_path), sheet_names)
+                if sheet_name is None:
+                    return None, None
+
+            df = workbook.parse(sheet_name)
+
+        # Drop fully empty rows/columns that Excel often leaves around the data
+        df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
+        if df.empty:
+            raise ValueError(f"Sheet '{sheet_name}' has no data")
+        return df, sheet_name
+
+    def _ask_sheet_name(self, file_name, sheet_names):
+        """Let the user pick a sheet from a workbook; returns None if cancelled"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Select Sheet")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        result = {'sheet': None}
+
+        frame = tk.Frame(dialog, padx=15, pady=15)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(frame, text=f"'{file_name}' has {len(sheet_names)} sheets.\nWhich one do you want to load?",
+                 justify='left').pack(anchor='w', pady=(0, 10))
+
+        sheet_var = tk.StringVar(value=sheet_names[0])
+        combo = ttk.Combobox(frame, textvariable=sheet_var, values=sheet_names, state="readonly", width=35)
+        combo.pack(fill=tk.X, pady=(0, 10))
+        combo.focus_set()
+
+        def on_ok(event=None):
+            result['sheet'] = sheet_var.get()
+            dialog.destroy()
+
+        button_frame = tk.Frame(frame)
+        button_frame.pack(fill=tk.X)
+        tk.Button(button_frame, text="Cancel", command=dialog.destroy, width=10).pack(side=tk.RIGHT, padx=5)
+        tk.Button(button_frame, text="Load", command=on_ok, width=10).pack(side=tk.RIGHT, padx=5)
+
+        dialog.bind("<Return>", on_ok)
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+
+        grab_when_visible(dialog)
+        self.root.wait_window(dialog)
+        return result['sheet']
+
     def _read_csv(self, file_path):
         """Read a CSV saved as UTF-8 (with or without BOM) or Windows-1252 (Excel default)"""
         try:
@@ -444,9 +537,9 @@ class HiPlotGUI:
     def generate_html(self):
         """Generate visualization HTML based on selected library"""
         if not self.csv_file_path:
-            messagebox.showwarning("Warning", "Please select a CSV file first")
+            messagebox.showwarning("Warning", "Please load a CSV or Excel file first")
             return
-        
+
         # Check which library to use
         selected_library = self.viz_library_var.get()
         
@@ -664,6 +757,49 @@ class HiPlotGUI:
         except Exception as e:
             print(f"Warning: Could not remove temp file: {e}")
     
+    def export_csv(self):
+        """Export the data as it will be plotted: edited values, added columns,
+        visible columns only, renamed, with value filters applied"""
+        if self.df is None or not self.column_manager:
+            messagebox.showwarning("Warning", "Please load a CSV or Excel file first")
+            return
+
+        export_df = self.column_manager.get_active_columns_df()
+        if export_df is None or export_df.empty:
+            messagebox.showwarning("Warning", "Nothing to export: no visible columns or all rows are filtered out")
+            return
+
+        initial_dir = self.get_output_directory()
+        if not os.path.isdir(initial_dir):
+            initial_dir = self.output_directory
+        base_name = os.path.splitext(os.path.basename(self.csv_file_path))[0]
+
+        file_path = filedialog.asksaveasfilename(
+            title="Export Data to CSV",
+            initialdir=initial_dir,
+            initialfile=f"{base_name}_edited.csv",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        if not file_path:
+            return
+
+        try:
+            # utf-8-sig so Excel opens non-ASCII text correctly
+            export_df.to_csv(file_path, index=False, encoding='utf-8-sig')
+        except PermissionError:
+            messagebox.showerror("Error", f"Could not write the file - is it open in another program?\n{file_path}")
+            return
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export CSV: {str(e)}")
+            return
+
+        details = f"{len(export_df)} rows, {len(export_df.columns)} columns"
+        excluded_rows = len(self.df) - len(export_df)
+        if excluded_rows > 0:
+            details += f"\n({excluded_rows} row(s) left out by value filters)"
+        messagebox.showinfo("Export Complete", f"Data exported to:\n{file_path}\n\n{details}")
+
     def view_html(self):
         """Open generated HTML in browser"""
         output_path = self.get_full_output_path()

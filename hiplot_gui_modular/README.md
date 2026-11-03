@@ -57,7 +57,8 @@ python app.py
 ## Features
 
 ### Original Features Preserved
-- ✅ CSV file loading and validation
+- ✅ CSV and Excel (.xlsx/.xlsm/.xls, with sheet picker) file loading
+- ✅ Export the edited data (visible columns, renames, filters, added columns) to CSV
 - ✅ Interactive column selection with visual feedback
 - ✅ Mathematical expression columns
 - ✅ Data viewing and editing with pagination
