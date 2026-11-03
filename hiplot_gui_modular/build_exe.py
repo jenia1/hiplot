@@ -37,8 +37,10 @@ def build_exe():
     
     # PyInstaller command
     cmd = [
-        'pyinstaller',
-        '--name=HiPlot_GUI',  # Name of the executable
+        # Run PyInstaller with this same Python (its environment has hiplot, pandas...);
+        # launching pyinstaller.exe directly can be blocked by Windows Application Control
+        sys.executable, '-m', 'PyInstaller',
+        '--name=Mr.Spaghetti',  # Name of the executable
         '--onedir',  # Create a directory with exe and dependencies (FASTER!)
         '--windowed',  # No console window (GUI app)
         '--clean',  # Clean cache before building
@@ -103,8 +105,8 @@ def build_exe():
     result = subprocess.run(cmd, cwd=current_dir)
     
     if result.returncode == 0:
-        dist_folder = os.path.join(current_dir, 'dist', 'HiPlot_GUI')
-        exe_path = os.path.join(dist_folder, 'HiPlot_GUI.exe')
+        dist_folder = os.path.join(current_dir, 'dist', 'Mr.Spaghetti')
+        exe_path = os.path.join(dist_folder, 'Mr.Spaghetti.exe')
         
         print(f"\n✓ Success! Application created at:")
         print(f"  Folder: {dist_folder}")

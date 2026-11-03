@@ -12,17 +12,17 @@ python build_exe.py
 
 The executable will be created at:
 ```
-hiplot_gui_modular/dist/HiPlot_GUI.exe
+hiplot_gui_modular/dist/Mr.Spaghetti.exe
 ```
 
 **File size:** ~51 MB (includes all dependencies)
 
 ## Distribution
 
-The generated `HiPlot_GUI.exe` is a **standalone executable** that can run on any Windows machine **without requiring Python** to be installed.
+The generated `Mr.Spaghetti.exe` is a **standalone executable** that can run on any Windows machine **without requiring Python** to be installed.
 
 ### To distribute:
-1. Copy `HiPlot_GUI.exe` from the `dist` folder
+1. Copy `Mr.Spaghetti.exe` from the `dist` folder
 2. Share it with users
 3. Users can double-click to run - no installation needed!
 
@@ -31,7 +31,7 @@ The generated `HiPlot_GUI.exe` is a **standalone executable** that can run on an
 If you want to customize the build, you can run PyInstaller directly:
 
 ```bash
-pyinstaller --name=HiPlot_GUI ^
+pyinstaller --name=Mr.Spaghetti ^
             --onefile ^
             --windowed ^
             --icon=..\examples\spaghetti.ico ^
@@ -66,7 +66,7 @@ If the icon is missing, the build will succeed but without a custom icon.
 ### Build Errors
 - Make sure all dependencies are installed: `pip install -r requirements.txt`
 - Delete `build` and `dist` folders and try again
-- Check `build/HiPlot_GUI/warn-HiPlot_GUI.txt` for warnings
+- Check `build/Mr.Spaghetti/warn-Mr.Spaghetti.txt` for warnings
 
 ## What's Included
 
@@ -80,7 +80,7 @@ The executable bundles:
 
 After building, test the executable:
 1. Navigate to `dist` folder
-2. Double-click `HiPlot_GUI.exe`
+2. Double-click `Mr.Spaghetti.exe`
 3. The application should start without requiring Python
 
 ## Notes

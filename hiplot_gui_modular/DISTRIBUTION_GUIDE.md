@@ -6,8 +6,8 @@ Your application is now built for **fast startup** with dependencies in a separa
 
 ### 📁 Application Location:
 ```
-hiplot_gui_modular/dist/HiPlot_GUI/
-├── HiPlot_GUI.exe        (22 MB - lightweight!)
+hiplot_gui_modular/dist/Mr.Spaghetti/
+├── Mr.Spaghetti.exe        (22 MB - lightweight!)
 └── _internal/            (105 MB - all libraries)
     ├── Python DLLs
     ├── pandas, numpy, plotly
@@ -28,41 +28,41 @@ hiplot_gui_modular/dist/HiPlot_GUI/
 ### Option 1: Zip the Entire Folder (Recommended)
 ```powershell
 cd dist
-Compress-Archive -Path HiPlot_GUI -DestinationPath HiPlot_GUI.zip
+Compress-Archive -Path Mr.Spaghetti -DestinationPath Mr.Spaghetti.zip
 ```
 - Users extract the zip
-- Double-click `HiPlot_GUI.exe` inside the folder
+- Double-click `Mr.Spaghetti.exe` inside the folder
 - Everything works!
 
 ### Option 2: Copy the Folder
-- Copy the entire `HiPlot_GUI` folder
+- Copy the entire `Mr.Spaghetti` folder
 - Paste it anywhere (USB drive, network, desktop)
 - Users run the `.exe` inside
 
 ## ⚠️ IMPORTANT: Keep Files Together!
 
-❌ **DON'T:** Copy only `HiPlot_GUI.exe` alone  
-✅ **DO:** Copy the entire `HiPlot_GUI` folder
+❌ **DON'T:** Copy only `Mr.Spaghetti.exe` alone  
+✅ **DO:** Copy the entire `Mr.Spaghetti` folder
 
 The `.exe` needs the `_internal` folder to work!
 
 ## 🎯 For End Users:
 
 ### Installation:
-1. Extract `HiPlot_GUI.zip` (or copy the folder)
-2. Open the `HiPlot_GUI` folder
-3. Double-click `HiPlot_GUI.exe`
+1. Extract `Mr.Spaghetti.zip` (or copy the folder)
+2. Open the `Mr.Spaghetti` folder
+3. Double-click `Mr.Spaghetti.exe`
 4. Done! 🎉
 
 ### Optional: Create Desktop Shortcut
-- Right-click `HiPlot_GUI.exe`
+- Right-click `Mr.Spaghetti.exe`
 - Send to → Desktop (create shortcut)
-- Rename shortcut to "HiPlot GUI"
+- Rename shortcut to "Mr.Spaghetti"
 
 ## 📊 Size Breakdown:
 
 **Total Distribution: ~127 MB**
-- `HiPlot_GUI.exe`: 22 MB (your app + bootloader)
+- `Mr.Spaghetti.exe`: 22 MB (your app + bootloader)
 - `_internal/`:
   - pandas + numpy: ~60 MB
   - plotly: ~15 MB
@@ -89,7 +89,7 @@ The `.exe` needs the `_internal` folder to work!
 
 To update just the code (not libraries):
 1. Rebuild: `python build_exe.py`
-2. Replace only `HiPlot_GUI.exe` in the folder
+2. Replace only `Mr.Spaghetti.exe` in the folder
 3. Libraries in `_internal/` stay the same!
 
 ## 💡 Pro Tips:
@@ -113,17 +113,17 @@ Use tools like:
 Example Inno Setup script:
 ```pascal
 [Setup]
-AppName=HiPlot GUI
+AppName=Mr.Spaghetti
 AppVersion=1.0
-DefaultDirName={pf}\HiPlot GUI
-DefaultGroupName=HiPlot GUI
+DefaultDirName={pf}\Mr.Spaghetti
+DefaultGroupName=Mr.Spaghetti
 
 [Files]
-Source: "dist\HiPlot_GUI\*"; DestDir: "{app}"; Flags: recursesubdirs
+Source: "dist\Mr.Spaghetti\*"; DestDir: "{app}"; Flags: recursesubdirs
 
 [Icons]
-Name: "{group}\HiPlot GUI"; Filename: "{app}\HiPlot_GUI.exe"
-Name: "{commondesktop}\HiPlot GUI"; Filename: "{app}\HiPlot_GUI.exe"
+Name: "{group}\Mr.Spaghetti"; Filename: "{app}\Mr.Spaghetti.exe"
+Name: "{commondesktop}\Mr.Spaghetti"; Filename: "{app}\Mr.Spaghetti.exe"
 ```
 
 ## 🛠️ Troubleshooting:

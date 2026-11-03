@@ -4,7 +4,7 @@
 
 Your standalone Windows application is ready at:
 ```
-hiplot_gui_modular/dist/HiPlot_GUI.exe
+hiplot_gui_modular/dist/Mr.Spaghetti.exe
 ```
 
 **Size:** ~52 MB  
@@ -12,7 +12,7 @@ hiplot_gui_modular/dist/HiPlot_GUI.exe
 
 ## 🚀 Quick Start for End Users
 
-Simply **double-click** `HiPlot_GUI.exe` to start the application!
+Simply **double-click** `Mr.Spaghetti.exe` to start the application!
 
 No installation needed. No Python required.
 
@@ -31,14 +31,14 @@ No installation needed. No Python required.
 ## 💾 Distributing to Users
 
 ### Option 1: Direct Copy
-1. Copy `HiPlot_GUI.exe` to a USB drive or network folder
+1. Copy `Mr.Spaghetti.exe` to a USB drive or network folder
 2. Users can run it directly - no setup needed!
 
 ### Option 2: Zip File
 ```bash
 # Create a zip file for easy sharing
 cd dist
-powershell Compress-Archive -Path HiPlot_GUI.exe -DestinationPath HiPlot_GUI.zip
+powershell Compress-Archive -Path Mr.Spaghetti.exe -DestinationPath Mr.Spaghetti.zip
 ```
 
 ### Option 3: Installer (Advanced)
@@ -100,7 +100,7 @@ Use tools like Inno Setup or NSIS to create a professional installer.
 ## 🔄 Updating
 
 To update the application:
-1. Download new `HiPlot_GUI.exe`
+1. Download new `Mr.Spaghetti.exe`
 2. Replace old file
 3. Done! No uninstall needed
 
